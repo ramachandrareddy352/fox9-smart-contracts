@@ -1,7 +1,7 @@
 use crate::errors::RaffleErrors;
-use crate::raffle_math::*;
 use crate::states::{PrizeType, Raffle, RaffleConfig, RaffleState};
 use crate::transfer_helpers::*;
+use crate::utils::*;
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
