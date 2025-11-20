@@ -1,4 +1,5 @@
 use crate::constants::*;
+use crate::errors::RaffleErrors;
 use anchor_lang::prelude::*;
 
 pub fn has_duplicate_pubkeys(list: &[Pubkey]) -> bool {
@@ -32,24 +33,18 @@ pub fn get_pct_amount(amount: u64, fees: u64, base: u64) -> Result<u64, RaffleEr
     product.checked_div(base).ok_or(RaffleErrors::Overflow)
 }
 
-pub fn is_descending_order_and_sum_100(win_shares: &[u8]) -> bool {
-    // Must have at least 1 share and sum must be 100
-    let total: u8 = win_shares.iter().map(|&s| s).sum();
-    if total != TOTAL_PCT {
-        return false;
-    }
-
-    // If single value and sum was 100, it's valid
-    if win_shares.len() <= 1 {
-        return true;
-    }
-
-    // Check descending order (allow equal values)
-    for i in 1..win_shares.len() {
-        if win_shares[i] > win_shares[i - 1] {
+pub fn validate_win_shares(win_shares: &[u8]) -> bool {
+    // Accumulate sum, check >0, and non-increasing in one pass
+    let mut total: u8 = 0;
+    for i in 0..win_shares.len() {
+        let s = win_shares[i];
+        if s == 0 {
+            return false;
+        }
+        total = total.checked_add(s).unwrap_or(255); // Early fail if overflow (invalid anyway)
+        if i > 0 && s > win_shares[i - 1] {
             return false;
         }
     }
-
-    true
+    total == TOTAL_PCT
 }

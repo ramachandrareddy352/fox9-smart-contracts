@@ -36,13 +36,14 @@ pub struct Raffle {
     pub prize_type: PrizeType,  //  NFT = `0`, SPL = `1`, Native Sol = `2`
     pub prize_amount: u64,      // if NFT set to `0`
     pub prize_mint: Option<Pubkey>, // if None then the prize is a native sol or else it is a NFT or SPL mint
-    pub price_escrow: Option<Pubkey>, // account which holds the price mint during the raffle and owner is the raffle PDA account, If Native sol then the amount is stored in Raffle PDA not in the escrow account, and if the prize is Native sol then it is set to None
+    pub prize_escrow: Option<Pubkey>, // account which holds the price mint during the raffle and owner is the raffle PDA account, If Native sol then the amount is stored in Raffle PDA not in the escrow account, and if the prize is Native sol then it is set to None
     pub num_winners: u8, // [1 - 10](max 10), If the prize is NFT then the num_winners is only `1`
     pub win_shares: Vec<u8>, // 1% = 1, 100% = 100.
     pub winners: Vec<Pubkey>, // Exactly num_winners entries.
     pub is_win_claimed: Vec<bool>, // if claimed set to `1`
-    pub status: RaffleState, // `0`-None, `1`-Initialized, `2`-Active, `3`-Cancelled, `4`-Ended
+    pub status: RaffleState, // `0`-None, `1`-Initialized, `2`-Active, `3`-Cancelled, `4`-SuccessEnded, `5`-FailedEnded
     pub is_unique_winners: bool, // if the winners list should be unique then set to `1`
+    pub claimable_ticket_amount: u64, // after announcing the winners the amount received by selling the tickets(ticket_mint) after removing the fees
     pub claimable_prize_back: u64, // if the total tickets solded is less than the winners count and if we call anounce winner then the remaining amounts can be claim back by the creator. and if the raffle failed to sold tickets then all amount is claimed back to creator
     pub raffle_bump: u8,
 }

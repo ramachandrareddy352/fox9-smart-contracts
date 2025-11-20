@@ -23,7 +23,7 @@ pub fn close_token_account_with_seeds<'info>(
         },
         signer_seeds,
     ))
-    .map_err(|_| err!(RaffleError::CloseAccountFailed))?
+    .map_err(|_| err!(RaffleErrors::CloseAccountFailed))?
 }
 
 /// Transfer SPL Tokens With PDA Seeds
@@ -36,7 +36,10 @@ pub fn transfer_tokens_with_seeds<'info>(
     signer_seeds: &[&[&[u8]]],
     amount: u64,
 ) -> Result<()> {
-    require!(from.amount >= amount, RaffleError::InsufficientTokenBalance);
+    require!(
+        from.amount >= amount,
+        RaffleErrors::InsufficientTokenBalance
+    );
     transfer(
         CpiContext::new_with_signer(
             token_program.to_account_info(),
@@ -49,7 +52,7 @@ pub fn transfer_tokens_with_seeds<'info>(
         ),
         amount,
     )
-    .map_err(|_| err!(RaffleError::TokenTransferFailed))?
+    .map_err(|_| err!(RaffleErrors::TokenTransferFailed))?
 }
 
 /// Transfer SPL Tokens (normal signer authority)
@@ -61,7 +64,10 @@ pub fn transfer_tokens<'info>(
     token_program: &Interface<'info, TokenInterface>,
     amount: u64,
 ) -> Result<()> {
-    require!(from.amount >= amount, RaffleError::InsufficientTokenBalance);
+    require!(
+        from.amount >= amount,
+        RaffleErrors::InsufficientTokenBalance
+    );
     transfer(
         CpiContext::new(
             token_program.to_account_info(),
@@ -73,7 +79,7 @@ pub fn transfer_tokens<'info>(
         ),
         amount,
     )
-    .map_err(|_| err!(RaffleError::TokenTransferFailed))?
+    .map_err(|_| err!(RaffleErrors::TokenTransferFailed))?
 }
 
 /// Create ATA (Associated Token Account) if missing
@@ -94,7 +100,7 @@ pub fn create_ata<'info>(
     require_keys_eq!(
         ata_account.key(),
         ata_expected,
-        RaffleError::InvalidAtaAddressMismatch
+        RaffleErrors::InvalidAtaAddressMismatch
     );
 
     // If data is not empty, assume it exists (basic check; for production, add deserialization validation)
@@ -114,7 +120,7 @@ pub fn create_ata<'info>(
 
     let cpi_program = ata_program.to_account_info();
     create(CpiContext::new(cpi_program, cpi_accounts))
-        .map_err(|_| err!(RaffleError::AtaCreationFailed))?;
+        .map_err(|_| err!(RaffleErrors::AtaCreationFailed))?;
 
     Ok(())
 }
@@ -130,7 +136,7 @@ pub fn transfer_sol_with_seeds<'info>(
 ) -> Result<()> {
     require!(
         from.lamports() >= amount,
-        RaffleError::InsufficientSolBalance
+        RaffleErrors::InsufficientSolBalance
     );
     system_program::transfer(
         CpiContext::new_with_signer(
@@ -143,7 +149,7 @@ pub fn transfer_sol_with_seeds<'info>(
         ),
         amount,
     )
-    .map_err(|_| err!(RaffleError::SolTransferFailed))?
+    .map_err(|_| err!(RaffleErrors::SolTransferFailed))?
 }
 
 /// Transfer SOL from normal signer
@@ -156,7 +162,7 @@ pub fn transfer_sol_from_signer<'info>(
 ) -> Result<()> {
     require!(
         from.lamports() >= amount,
-        RaffleError::InsufficientSolBalance
+        RaffleErrors::InsufficientSolBalance
     );
     system_program::transfer(
         CpiContext::new(
@@ -168,5 +174,5 @@ pub fn transfer_sol_from_signer<'info>(
         ),
         amount,
     )
-    .map_err(|_| err!(RaffleError::SolTransferFailed))?
+    .map_err(|_| err!(RaffleErrors::SolTransferFailed))?
 }
