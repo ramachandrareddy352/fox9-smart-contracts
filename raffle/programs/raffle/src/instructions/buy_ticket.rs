@@ -1,12 +1,12 @@
 use crate::errors::RaffleErrors;
-use crate::raffle_math::*;
-use crate::states::{Buyer, PrizeType, Raffle, RaffleState};
-use crate::transfer_helpers::*;
+use crate::helpers::*;
+use crate::states::{Buyer, Raffle, RaffleConfig, RaffleState};
+use crate::utils::calculate_max_tickets;
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
-pub fn buy_ticket(ctx: Context<BuyTicket>, tickets_to_buy: u16) -> Result<()> {
+pub fn buy_ticket(ctx: Context<BuyTicket>, raffle_id: u32, tickets_to_buy: u16) -> Result<()> {
     let raffle = &mut ctx.accounts.raffle;
     let buyer_account = &mut ctx.accounts.buyer_account;
     let buyer = &ctx.accounts.buyer;
@@ -15,33 +15,19 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, tickets_to_buy: u16) -> Result<()> {
 
     // Must be within start_time .. end_time
     require_gte!(now, raffle.start_time, RaffleErrors::RaffleNotStarted);
-    require_lt!(now, raffle.end_time, RaffleErrors::RaffleAlreadyEnded);
+    require_gte!(raffle.end_time, now, RaffleErrors::RaffleAlreadyEnded);
     require_gt!(tickets_to_buy, 0, RaffleErrors::InvalidZeroTickets);
 
     // Total supply cap: reject if not enough tickets left
-    let remaining = raffle
+    let remaining_tickets = raffle
         .total_tickets
         .checked_sub(raffle.tickets_sold)
         .ok_or(RaffleErrors::Overflow)?;
-    require_gte!(remaining, tickets_to_buy, RaffleErrors::TicketsSoldOut);
-
-    // Initialize buyer account if it's the first time.
-    if buyer_account.tickets == 0 && buyer_account.user == Pubkey::default() {
-        buyer_account.raffle_id = raffle.raffle_id as u64;
-        buyer_account.user = buyer.key();
-        buyer_account.tickets = 0;
-    } else {
-        require_keys_eq!(
-            buyer_account.user,
-            buyer.key(),
-            RaffleErrors::InvalidBuyerAccountUser
-        );
-        require_eq!(
-            buyer_account.raffle_id,
-            raffle.raffle_id,
-            RaffleErrors::InvalidBuyerAccountRaffle
-        );
-    }
+    require_gte!(
+        remaining_tickets,
+        tickets_to_buy,
+        RaffleErrors::TicketsSoldOut
+    );
 
     // max tickets can a single wallet can buy
     let max_tickets_can_buy: u16 =
@@ -57,6 +43,23 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, tickets_to_buy: u16) -> Result<()> {
         new_buyer_tickets,
         RaffleErrors::MaxTicketsPerWalletExceeded
     );
+
+    // Initialize buyer account if it's the first time.
+    if buyer_account.tickets == 0 && buyer_account.user == Pubkey::default() {
+        buyer_account.raffle_id = raffle.raffle_id as u32;
+        buyer_account.user = buyer.key();
+    } else {
+        require_keys_eq!(
+            buyer_account.user,
+            buyer.key(),
+            RaffleErrors::InvalidBuyerAccountUser
+        );
+        require_eq!(
+            buyer_account.raffle_id,
+            raffle.raffle_id,
+            RaffleErrors::InvalidBuyerAccountRaffle
+        );
+    }
 
     // Update state(avaoid re-entrance)
     raffle.tickets_sold = raffle
@@ -85,17 +88,24 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, tickets_to_buy: u16) -> Result<()> {
         // SPL ticket => transfer from buyer ATA to ticket_escrow ATA
         let ticket_mint = raffle.ticket_mint.ok_or(RaffleErrors::MissingTicketMint)?;
 
-        // Escrow account must match what raffle stored
-        let ticket_escrow = &ctx.accounts.ticket_escrow;
-        let buyer_ticket_ata = &ctx.accounts.buyer_ticket_ata;
+        // Deserialize accounts for validation and CPI
+        let ticket_escrow = InterfaceAccount::<TokenAccount>::try_from(
+            &ctx.accounts.ticket_escrow.to_account_info(),
+        )?;
+        let buyer_ticket_ata = InterfaceAccount::<TokenAccount>::try_from(
+            &ctx.accounts.buyer_ticket_ata.to_account_info(),
+        )?;
+        let ticket_token_program = InterfaceAccount::<TokenInterface>::try_from(
+            &ctx.accounts.ticket_token_program.to_account_info(),
+        )?;
 
         // Ensure we are using the correct escrow ATA
-        let stored_escrow = raffle
+        let stored_ticket_escrow = raffle
             .ticket_escrow
             .ok_or(RaffleErrors::MissingTicketEscrow)?;
         require_keys_eq!(
             ticket_escrow.key(),
-            stored_escrow,
+            stored_ticket_escrow,
             RaffleErrors::InvalidTicketEscrow
         );
 
@@ -110,13 +120,18 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, tickets_to_buy: u16) -> Result<()> {
             ticket_mint,
             RaffleErrors::InvalidBuyerTicketAtaMint
         );
+        require_keys_eq!(
+            ticket_escrow.token_program,
+            ticket_token_program.key(),
+            RaffleErrors::InvalidTokenProgram
+        );
 
         // Transfer SPL tokens from buyer to raffle ticket escrow
         transfer_tokens(
-            buyer_ticket_ata,
-            ticket_escrow,
+            &buyer_ticket_ata,
+            &ticket_escrow,
             buyer,
-            &ctx.accounts.ticket_token_program,
+            &ticket_token_program,
             price_to_pay,
         )?;
     }
@@ -133,6 +148,7 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, tickets_to_buy: u16) -> Result<()> {
 }
 
 #[derive(Accounts)]
+#[instruction(raffle_id: u32)]
 pub struct BuyTicket<'info> {
     #[account(
         mut,
@@ -144,7 +160,7 @@ pub struct BuyTicket<'info> {
 
     #[account(
         mut,
-        seeds = [b"raffle", raffle.raffle_id.to_le_bytes().as_ref()],
+        seeds = [b"raffle", raffle_id.to_le_bytes().as_ref()],
         bump = raffle.raffle_bump,
         constraint = raffle.status == RaffleState::Active @ RaffleErrors::RaffleNotActive,
     )]
@@ -170,13 +186,13 @@ pub struct BuyTicket<'info> {
 
     /// Buyer ATA for ticket mint (used only if raffle.ticket_mint.is_some())
     #[account(mut)]
-    pub buyer_ticket_ata: InterfaceAccount<'info, TokenAccount>,
+    pub buyer_ticket_ata: UncheckedAccount<'info>,
 
     /// Ticket escrow ATA owned by raffle PDA (for SPL tickets)
     #[account(mut)]
-    pub ticket_escrow: InterfaceAccount<'info, TokenAccount>,
+    pub ticket_escrow: UncheckedAccount<'info>,
 
-    pub ticket_token_program: Interface<'info, TokenInterface>,
+    pub ticket_token_program: UncheckedAccount<'info>,
 
     pub system_program: Program<'info, System>,
 }
