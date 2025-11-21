@@ -31,7 +31,7 @@ pub struct Raffle {
     pub tickets_sold: u16, // always <= total tickets
     pub ticket_price: u64, // price in terms of selected ticket_mint token
     pub ticket_mint: Option<Pubkey>, // buyer have to use this mint to buy the ticket, If the amount have to pay in terms of Native sol then set to None or set to mint address
-    pub ticker_escrow: Option<Pubkey>, // account which holds the ticket mint amount during the raffle and owner of this ticket escrow is the raffle PDA account, If Native sol then the amount is stored in Raffle PDA not in the escrow account, and if the ticket is Native sol then it is set to None to tiket escrow
+    pub ticket_escrow: Option<Pubkey>, // account which holds the ticket mint amount during the raffle and owner of this ticket escrow is the raffle PDA account, If Native sol then the amount is stored in Raffle PDA not in the escrow account, and if the ticket is Native sol then it is set to None to tiket escrow
     pub max_per_wallet_pct: u8, // max percentage of single wallet can buy the tickets from total tickets, check weather the percentage cannot able to buy single ticket we have to allow the single ticket to buy
     pub prize_type: PrizeType,  //  NFT = `0`, SPL = `1`, Native Sol = `2`
     pub prize_amount: u64,      // if NFT set to `0`

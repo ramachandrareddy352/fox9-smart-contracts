@@ -91,7 +91,7 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, tickets_to_buy: u16) -> Result<()> {
 
         // Ensure we are using the correct escrow ATA
         let stored_escrow = raffle
-            .ticker_escrow
+            .ticket_escrow
             .ok_or(RaffleErrors::MissingTicketEscrow)?;
         require_keys_eq!(
             ticket_escrow.key(),

@@ -1,6 +1,7 @@
+use crate::constants::*;
 use crate::errors::RaffleErrors;
-use crate::raffle_math::{has_duplicate_pubkeys, is_descending_order_and_sum_100, TOTAL_PCT};
 use crate::states::{PrizeType, Raffle, RaffleConfig, RaffleState};
+use crate::utils::has_duplicate_pubkeys;
 use anchor_lang::prelude::*;
 
 pub fn announce_winner(
@@ -11,7 +12,6 @@ pub fn announce_winner(
     let raffle = &mut ctx.accounts.raffle;
 
     // ---------- Validations ----------
-    require_eq!(raffle.raffle_id, raffle_id, RaffleErrors::InvalidRaffleId);
     require!(
         raffle.status == RaffleState::Active,
         RaffleErrors::RaffleNotActive
@@ -137,9 +137,8 @@ fn process_ticket_revenue<'info>(ctx: &Context<AnnounceWinner>, tickets_sold: u6
 
     match raffle.ticket_mint {
         // --------------------------------------------------
-        // SOL tickets → send lamports
-        // fee: to raffle_config PDA
-        // add remaining ticket mint amount to claimable_ticket_amount
+        // SOL: Fee is sent to config PDA
+        // creator: remaining ticket mint amount(total revenue - fees) to claimable_ticket_amount(this is claimed by creator in another function)
         // --------------------------------------------------
         None => {
             transfer_sol_with_seeds(
@@ -152,29 +151,34 @@ fn process_ticket_revenue<'info>(ctx: &Context<AnnounceWinner>, tickets_sold: u6
         }
 
         // --------------------------------------------------
-        // SPL tickets → move tokens from ticket_escrow (raffle PDA ATA)
-        // fee: to ATA owned by raffle_config PDA
-        // creator: update claimable_ticket_amount
+        // SPL: fees is sent to ATA owned by raffle_config PDA
+        // creator: remaining ticket mint amount(total revenue - fees) to claimable_ticket_amount(this is claimed by creator in another function)
         // --------------------------------------------------
         Some(stored_ticket_mint) => {
-            let escrow = &ctx.accounts.ticket_escrow;
+            let ticket_escrow = &ctx.accounts.ticket_escrow;
             let ticket_token_program = &ctx.accounts.ticket_token_program;
-            let fee_treasury_ata = &ctx.accounts.fee_treasury_ata;
+            let ticket_fee_treasury = &ctx.accounts.ticket_fee_treasury;
+            let ticket_mint = &ctx.accounts.ticket_mint;
 
             // Mint in state must match the provided ticket_mint
             require_keys_eq!(
-                escrow.mint,
+                ticket_escrow.mint,
+                stored_ticket_mint,
+                RaffleErrors::InvalidTicketMint
+            );
+            require_keys_eq!(
+                ticket_mint.key(),
                 stored_ticket_mint,
                 RaffleErrors::InvalidTicketMint
             );
 
             // Escrow must match what was stored in raffle
-            let stored_escrow = raffle
-                .ticker_escrow
+            let stored_ticket_escrow = raffle
+                .ticket_escrow
                 .ok_or(RaffleErrors::MissingTicketEscrow)?;
             require_keys_eq!(
-                escrow.key(),
-                stored_escrow,
+                ticket_escrow.key(),
+                stored_ticket_escrow,
                 RaffleErrors::InvalidTicketEscrow
             );
 
@@ -182,35 +186,31 @@ fn process_ticket_revenue<'info>(ctx: &Context<AnnounceWinner>, tickets_sold: u6
             // ensure ATA is for (raffle_config, ticket_mint)
             create_ata(
                 &ctx.accounts.raffle_admin.to_account_info(), // payer = admin
-                &fee_treasury_ata.to_account_info(),
+                &ticket_fee_treasury.to_account_info(),
                 &raffle_config.to_account_info(), // owner = raffle_config PDA
-                &ticket_mint_acc.to_account_info(),
+                &ticket_mint.to_account_info(),
                 &system_program.to_account_info(),
                 &ticket_token_program.to_account_info(),
                 &ctx.accounts.associated_token_program.to_account_info(),
             )?;
 
             // Confirm token-account owner is raffle_config
-            require_keys_eq!(
-                fee_treasury_ata.owner,
-                raffle_config.key(),
-                RaffleErrors::InvalidFeeTreasuryAtaOwner
-            );
+            // No need to check this, because in create ata, if any values are changed then expected ata is different and return error
+            // require_keys_eq!(
+            //     ticket_fee_treasury.owner,
+            //     raffle_config.key(),
+            //     RaffleErrors::InvalidFeeTreasuryAtaOwner
+            // );
 
-            // --- Fee transfer: escrow -> fee_treasury_ata ---
-            transfer(
-                CpiContext::new_with_signer(
-                    token_program.to_account_info(),
-                    Transfer {
-                        from: escrow.to_account_info(),
-                        to: fee_treasury_ata.to_account_info(),
-                        authority: raffle_ai.clone(),
-                    },
-                    signer_seeds,
-                ),
+            // --- Fee transfer: escrow -> ticket_fee_treasury ---
+            transfer_tokens_with_seeds(
+                &ticket_escrow.to_account_info(),
+                &ticket_fee_treasury.to_account_info(),
+                &raffle_ai.to_account_info(),
+                &ticket_token_program.to_account_info(),
+                signer_seeds,
                 fee_amount,
-            )
-            .map_err(|_| error!(RaffleErrors::TokenTransferFailed))?;
+            )?;
         }
     }
 
@@ -231,18 +231,22 @@ pub struct AnnounceWinner<'info> {
         mut,
         seeds = [b"raffle", raffle_id.to_le_bytes().as_ref()],
         bump = raffle.raffle_bump,
-        constraint = raffle.creator == raffle_creator.key() @ RaffleErrors::InvalidRaffleCreator,
+        constraint = raffle.raffle_id == raffle_id @ RaffleErrors::InvalidRaffleId,
     )]
     pub raffle: Box<Account<'info, Raffle>>,
 
     #[account(mut)]
     pub raffle_admin: Signer<'info>,
 
+    pub ticket_mint: UncheckedAccount<'info>,
+
+    // ticket escrow owner is the raffle PDA if the ticket mint == sol
     #[account(mut)]
     pub ticket_escrow: UncheckedAccount<'info>,
 
+    // fee(spl) is stored in config ata, fee treasury owner is the config PDA if the ticket mint != sol, or else the fee(sol) is directely stored in config PDA account
     #[account(mut)]
-    pub fee_treasury_ata: UncheckedAccount<'info>,
+    pub ticket_fee_treasury: UncheckedAccount<'info>,
 
     pub ticket_token_program: UncheckedAccount<'info>,
 

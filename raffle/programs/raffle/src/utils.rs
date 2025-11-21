@@ -34,17 +34,16 @@ pub fn get_pct_amount(amount: u64, fees: u64, base: u64) -> Result<u64, RaffleEr
 }
 
 pub fn validate_win_shares(win_shares: &[u8]) -> bool {
-    // Accumulate sum, check >0, and non-increasing in one pass
-    let mut total: u8 = 0;
+    let mut total: u16 = 0;
     for i in 0..win_shares.len() {
         let s = win_shares[i];
-        if s == 0 {
+        if s == 0 || s > 100 {
             return false;
         }
-        total = total.checked_add(s).unwrap_or(255); // Early fail if overflow (invalid anyway)
         if i > 0 && s > win_shares[i - 1] {
             return false;
-        }
+        } // non-increasing
+        total = total.checked_add(s as u16).unwrap_or(u16::MAX);
     }
-    total == TOTAL_PCT
+    total == TOTAL_PCT as u16
 }

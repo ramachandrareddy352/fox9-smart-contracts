@@ -108,7 +108,7 @@ pub fn update_raffle_ticketing(
             )?;
 
             raffle.ticket_mint = None;
-            raffle.ticker_escrow = None;
+            raffle.ticket_escrow = None;
         }
 
         // Case 3: SOL -> SPL (create new escrow ATA)
@@ -124,7 +124,7 @@ pub fn update_raffle_ticketing(
             )?;
 
             raffle.ticket_mint = Some(new_mint);
-            raffle.ticker_escrow = Some(ctx.accounts.ticket_escrow.key());
+            raffle.ticket_escrow = Some(ctx.accounts.ticket_escrow.key());
         }
 
         // Case 4: SPL -> SPL (close old escrow, create new one)
@@ -154,7 +154,7 @@ pub fn update_raffle_ticketing(
                 )?;
 
                 raffle.ticket_mint = Some(new_mint);
-                raffle.ticker_escrow = Some(ctx.accounts.ticket_escrow.key());
+                raffle.ticket_escrow = Some(ctx.accounts.ticket_escrow.key());
             }
         }
     }

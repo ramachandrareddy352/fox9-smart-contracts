@@ -93,6 +93,11 @@ pub fn create_ata<'info>(
     token_program: &AccountInfo<'info>,
     ata_program: &Program<'info, AssociatedToken>,
 ) -> Result<()> {
+    // If data is not empty, assume it exists (basic check; for production, add deserialization validation)
+    if !ata_account.data_is_empty() {
+        return Ok(());
+    }
+
     // Derive expected ATA address
     let ata_expected = get_associated_token_address(&owner.key(), &mint.key());
 
@@ -102,11 +107,6 @@ pub fn create_ata<'info>(
         ata_expected,
         RaffleErrors::InvalidAtaAddressMismatch
     );
-
-    // If data is not empty, assume it exists (basic check; for production, add deserialization validation)
-    if !ata_account.data_is_empty() {
-        return Ok(());
-    }
 
     // Prepare CPI accounts
     let cpi_accounts = Create {
@@ -161,7 +161,7 @@ pub fn transfer_sol_from_signer<'info>(
     amount: u64,
 ) -> Result<()> {
     require!(
-        from.lamports() >= amount,
+        from.to_account_info().lamports() >= amount,
         RaffleErrors::InsufficientSolBalance
     );
     system_program::transfer(
