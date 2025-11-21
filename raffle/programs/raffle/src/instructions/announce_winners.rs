@@ -83,12 +83,9 @@ pub fn announce_winner(
             .checked_sub(assigned_pct)
             .ok_or(RaffleErrors::Overflow)?;
 
-        claimable_back = raffle
-            .prize_amount
-            .checked_mul(leftover_pct)
-            .ok_or(RaffleErrors::Overflow)?
-            .checked_div(total_pct)
-            .ok_or(RaffleErrors::Overflow)?;
+        if (leftover_pct > 0) {
+            claimable_back = get_pct_amount(prize_amount, leftover_pct, total_pct)?;
+        }
     }
 
     raffle.claimable_prize_back = claimable_back;

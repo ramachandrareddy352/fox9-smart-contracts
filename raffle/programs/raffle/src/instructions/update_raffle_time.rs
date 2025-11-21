@@ -25,7 +25,7 @@ pub fn update_raffle_time(
     let now = Clock::get()?.unix_timestamp;
 
     // Raffle must not have started yet
-    require!(now < raffle.start_time, RaffleErrors::RaffleAlreadyStarted);
+    require_gt!(raffle.start_time, now, RaffleErrors::RaffleAlreadyStarted);
 
     // New times must be in the future window
     require_gte!(new_start_time, now, RaffleErrors::StartTimeInPast);
@@ -76,6 +76,4 @@ pub struct UpdateRaffleTime<'info> {
 
     #[account(mut)]
     pub raffle_admin: Signer<'info>,
-
-    pub system_program: Program<'info, System>,
 }

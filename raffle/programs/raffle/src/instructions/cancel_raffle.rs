@@ -1,15 +1,16 @@
 use crate::errors::RaffleErrors;
+use crate::errors::RaffleErrors;
+use crate::helpers::*;
 use crate::states::{PrizeType, Raffle, RaffleConfig, RaffleState};
-use crate::transfer_helpers::*;
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{TokenAccount, TokenInterface};
+use anchor_spl::associated_token::AssociatedToken;
+use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 pub fn cancel_raffle(ctx: Context<CancelRaffle>, raffle_id: u32) -> Result<()> {
-    let raffle_config = &ctx.accounts.raffle_config;
     let raffle = &mut ctx.accounts.raffle;
     let creator = &ctx.accounts.creator;
 
-    // basic checks of ownership
+    // Basic checks of ownership
     require_eq!(raffle.raffle_id, raffle_id, RaffleErrors::InvalidRaffleId);
     require_keys_eq!(raffle.creator, creator.key(), RaffleErrors::InvalidCreator);
 
@@ -22,17 +23,18 @@ pub fn cancel_raffle(ctx: Context<CancelRaffle>, raffle_id: u32) -> Result<()> {
     // No tickets must have been sold
     require_eq!(raffle.tickets_sold, 0, RaffleErrors::TicketsAlreadySold);
 
-    // 3. Refund prize to creator (but NOT creation fee)
+    // Refund prize to creator (but NOT creation fee)
     let prize_amount = raffle.prize_amount;
     let raffle_ai = raffle.to_account_info();
 
     // Seeds for raffle PDA signing (same as in create_raffle)
-    let raffle_seeds: &[&[u8]] = &[
+    let signer_seeds: &[&[&[u8]]] = &[&[
         b"raffle",
         &raffle.raffle_id.to_le_bytes(),
         &[raffle.raffle_bump],
-    ];
-    let signer_seeds: &[&[&[u8]]] = &[raffle_seeds];
+    ]];
+
+    raffle.status = RaffleState::Cancelled;
 
     match raffle.prize_type {
         PrizeType::Sol => {
@@ -47,14 +49,21 @@ pub fn cancel_raffle(ctx: Context<CancelRaffle>, raffle_id: u32) -> Result<()> {
             )?;
         }
         PrizeType::Nft | PrizeType::Spl => {
-            let prize_escrow = &ctx.accounts.prize_escrow;
-            let creator_prize_ata = &ctx.accounts.creator_prize_ata;
-            let prize_token_program = &ctx.accounts.prize_token_program;
+            // Deserialize accounts for validation and CPI
+            let prize_escrow = InterfaceAccount::<TokenAccount>::try_from(
+                &ctx.accounts.prize_escrow.to_account_info(),
+            )?;
+            let creator_prize_ata_raw = &ctx.accounts.creator_prize_ata.to_account_info();
+            let prize_mint_acc =
+                InterfaceAccount::<Mint>::try_from(&ctx.accounts.prize_mint.to_account_info())?;
+            let prize_token_program = InterfaceAccount::<TokenInterface>::try_from(
+                &ctx.accounts.prize_token_program.to_account_info(),
+            )?;
 
             // Ensure raffle expects a prize mint / escrow
             let expected_prize_mint = raffle.prize_mint.ok_or(RaffleErrors::MissingPrizeMint)?;
             let expected_escrow = raffle
-                .price_escrow
+                .prize_escrow
                 .ok_or(RaffleErrors::MissingPrizeEscrow)?;
 
             // Escrow account must match what raffle stored
@@ -78,34 +87,53 @@ pub fn cancel_raffle(ctx: Context<CancelRaffle>, raffle_id: u32) -> Result<()> {
                 RaffleErrors::InvalidPrizeMint
             );
 
-            /// INFO: Creator can give any PDA to receive the amount back
-            // Creator ATA must be owned by creator
-            // require_keys_eq!(
-            //     creator_prize_ata.owner,
-            //     creator.key(),
-            //     RaffleErrors::InvalidCreatorPrizeAtaOwner
-            // );
+            // Validate token program
+            require_keys_eq!(
+                prize_escrow.token_program,
+                prize_token_program.key(),
+                RaffleErrors::InvalidTokenProgram
+            );
 
             // Creator ATA mint must match prize mint
             require_keys_eq!(
-                creator_prize_ata.mint,
+                prize_mint_acc.key(),
                 expected_prize_mint,
-                RaffleErrors::InvalidCreatorPrizeAtaMint
+                RaffleErrors::InvalidPrizeMint
+            );
+
+            // Create creator_prize_ata if missing (payer = creator, owner = creator)
+            create_ata(
+                &creator.to_account_info(), // payer = creator
+                creator_prize_ata_raw,      // ata_account
+                &creator.to_account_info(), // owner = creator
+                &ctx.accounts.prize_mint.to_account_info(),
+                &ctx.accounts.system_program.to_account_info(),
+                &ctx.accounts.prize_token_program.to_account_info(),
+                &ctx.accounts.associated_token_program.to_account_info(),
+            )?;
+
+            // Deserialize creator_prize_ata after potential creation
+            let creator_prize_ata =
+                InterfaceAccount::<TokenAccount>::try_from(creator_prize_ata_raw)?;
+
+            // Creator ATA must be owned by creator
+            require_keys_eq!(
+                creator_prize_ata.owner,
+                creator.key(),
+                RaffleErrors::InvalidCreatorPrizeAtaOwner
             );
 
             // Transfer SPL / NFT prize back to creator from escrow using raffle PDA as authority
             transfer_tokens_with_seeds(
-                prize_escrow,
-                creator_prize_ata,
+                &prize_escrow,
+                &creator_prize_ata,
                 &raffle_ai,
-                prize_token_program,
+                &prize_token_program,
                 signer_seeds,
                 prize_amount,
             )?;
         }
     }
-
-    raffle.status = RaffleState::Cancelled;
 
     emit!(RaffleCancelled {
         raffle_id: raffle.raffle_id,
@@ -139,21 +167,25 @@ pub struct CancelRaffle<'info> {
     )]
     pub creator: Signer<'info>,
 
-    #[account(mut)]
     pub raffle_admin: Signer<'info>,
 
-    /// Prize escrow ATA (SPL / NFT) owned by raffle PDA.
-    /// Required only when prize_type is SPL or NFT.
+    // Prize mint (SPL / NFT) – used for ATA creation/validation.
+    // Required only when prize_type is SPL or NFT.
+    pub prize_mint: UncheckedAccount<'info>,
+
+    // Prize escrow ATA (SPL / NFT) owned by raffle PDA.
+    // Required only when prize_type is SPL or NFT.
     #[account(mut)]
-    pub prize_escrow: InterfaceAccount<'info, TokenAccount>,
+    pub prize_escrow: UncheckedAccount<'info>,
 
-    /// Creator's ATA for the prize mint (SPL / NFT).
-    /// Required only when prize_type is SPL or NFT.
+    // Creator's ATA for the prize mint (SPL / NFT).
+    // Required only when prize_type is SPL or NFT.
     #[account(mut)]
-    pub creator_prize_ata: InterfaceAccount<'info, TokenAccount>,
+    pub creator_prize_ata: UncheckedAccount<'info>,
 
-    /// Token program used for prize SPL/NFT transfers
-    pub prize_token_program: Interface<'info, TokenInterface>,
+    // Token program used for prize SPL/NFT transfers
+    pub prize_token_program: UncheckedAccount<'info>,
 
+    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }

@@ -1,51 +1,51 @@
 use crate::errors::RaffleErrors;
+use crate::helpers::transfer_sol_with_seeds;
 use crate::states::RaffleConfig;
 use anchor_lang::prelude::*;
-use anchor_lang::system_program;
+use anchor_lang::system_program::{self, System};
 
-/// Withdraw SOL fees accumulated inside the RaffleConfig PDA. Only the config owner can withdraw.
 pub fn withdraw_sol_fees(ctx: Context<WithdrawSolFees>, amount: u64) -> Result<()> {
     let config = &ctx.accounts.raffle_config;
     let owner = &ctx.accounts.owner;
 
-    require_keys_eq!(
-        config.raffle_owner,
-        owner.key(),
-        RaffleErrors::InvalidConfigOwner
-    );
+    require_gt!(amount, 0, RaffleErrors::InvalidZeroAmount);
 
-    // Check PDA balance
-    let pda_balance = ctx.accounts.raffle_config.to_account_info().lamports();
-    require!(pda_balance > 0, RaffleErrors::NoFundsToWithdraw);
-
-    // Compute minimum rent exemption
+    // Rent-exempt check
+    let pda_ai = config.to_account_info();
     let rent = Rent::get()?;
-    let min_rent = rent.minimum_balance(RaffleConfig::INIT_SPACE + 8);
+    let min_rent = rent.minimum_balance(pda_ai.data_len());
 
-    // Ensure withdrawn amount does not take PDA below rent exempt
     require!(
-        pda_balance.saturating_sub(amount) >= min_rent,
+        pda_ai.lamports() >= min_rent + amount,
         RaffleErrors::InsufficientFundsForWithdrawal
     );
 
-    // Transfer lamports (PDA -> receiver)
-    let config_ai = ctx.accounts.raffle_config.to_account_info();
-    let receiver_ai = ctx.accounts.receiver.to_account_info();
+    //  Receiver validation (prevent sending to PDAs / token accounts)
+    require!(
+        ctx.accounts.receiver.is_writable,
+        RaffleErrors::ReceiverNotWritable
+    );
+    require_keys_eq!(
+        ctx.accounts.receiver.owner,
+        system_program::ID,
+        RaffleErrors::InvalidReceiverOwner
+    );
 
-    let seeds: &[&[u8]] = &[b"raffle", &[config.config_bump]];
-    let signer_seeds: &[&[&[u8]]] = &[seeds];
+    let signer_seeds: &[&[&[u8]]] = &[&[b"raffle", &[config.config_bump]]];
 
-    system_program::transfer(
-        CpiContext::new_with_signer(
-            ctx.accounts.system_program.to_account_info(),
-            system_program::Transfer {
-                from: config_ai,
-                to: receiver_ai,
-            },
-            signer_seeds,
-        ),
+    // Transfer using your helper
+    transfer_sol_with_seeds(
+        &pda_ai,
+        &ctx.accounts.receiver.to_account_info(),
+        &ctx.accounts.system_program,
+        signer_seeds,
         amount,
     )?;
+
+    emit!(FeesWithdrawn {
+        amount,
+        receiver: ctx.accounts.receiver.key(),
+    });
 
     Ok(())
 }
@@ -55,17 +55,18 @@ pub struct WithdrawSolFees<'info> {
     #[account(
         mut,
         seeds = [b"raffle"],
-        bump = raffle_config.config_bump
+        bump = raffle_config.config_bump,
+        constraint = raffle_config.raffle_owner == owner.key() @ RaffleErrors::InvalidRaffleOwner,
     )]
-    pub raffle_config: Account<'info, RaffleConfig>,
+    pub raffle_config: Box<Account<'info, RaffleConfig>>,
 
-    /// Must be the config owner (NOT admin)
+    /// Must be the config owner (not admin)
     #[account(mut)]
     pub owner: Signer<'info>,
 
-    /// Receiver account (any wallet chosen by owner)
+    /// Any writable system-owned account (wallet)
     #[account(mut)]
-    pub receiver: AccountInfo<'info>,
+    pub receiver: SystemAccount<'info>,
 
     pub system_program: Program<'info, System>,
 }

@@ -8,7 +8,6 @@ pub struct RaffleConfig {
     pub raffle_admin: Pubkey, // the frontend manager key
     pub creation_fee_lamports: u64, // while creating the raffle the user have to pay fees Native SOL
     pub ticket_fee_bps: u16, // 100 = 1%, for every sale of ticket this % of fees is sent to owner + stakers
-    pub winning_fee_bps: u16, // 100 = 1%, the fees is collected from the winners prizes(sol & spl)
     pub minimum_raffle_period: u32, // minimum period the raffle should be
     pub maximum_raffle_period: u32, // maximum peroid the raffle can be set
     pub minimum_tickets: u16, // minimum tickets have to set in a raffle, min - 3(default)

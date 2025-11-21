@@ -8,7 +8,6 @@ pub fn initialize_raffle_config(
     raffle_admin: Pubkey,
     creation_fee_lamports: u64,
     ticket_fee_bps: u16,
-    winning_fee_bps: u16,
     minimum_raffle_period: u32,
     maximum_raffle_period: u32,
     minimum_tickets: u16,
@@ -37,7 +36,6 @@ pub fn initialize_raffle_config(
     raffle_config.raffle_admin = raffle_admin;
     raffle_config.creation_fee_lamports = creation_fee_lamports;
     raffle_config.ticket_fee_bps = ticket_fee_bps;
-    raffle_config.winning_fee_bps = winning_fee_bps;
     raffle_config.minimum_raffle_period = minimum_raffle_period;
     raffle_config.maximum_raffle_period = maximum_raffle_period;
     raffle_config.minimum_tickets = minimum_tickets;
@@ -72,7 +70,6 @@ pub fn update_raffle_config_data(
     ctx: Context<UpdateRaffleConfig>,
     creation_fee_lamports: u64,
     ticket_fee_bps: u16,
-    winning_fee_bps: u16,
     minimum_raffle_period: u32,
     maximum_raffle_period: u32,
     minimum_tickets: u16,
@@ -99,7 +96,6 @@ pub fn update_raffle_config_data(
 
     raffle_config.creation_fee_lamports = creation_fee_lamports;
     raffle_config.ticket_fee_bps = ticket_fee_bps;
-    raffle_config.winning_fee_bps = winning_fee_bps;
     raffle_config.minimum_raffle_period = minimum_raffle_period;
     raffle_config.maximum_raffle_period = maximum_raffle_period;
     raffle_config.minimum_tickets = minimum_tickets;
