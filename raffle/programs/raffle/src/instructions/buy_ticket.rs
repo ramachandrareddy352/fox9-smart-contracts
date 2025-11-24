@@ -1,12 +1,20 @@
-use crate::errors::RaffleErrors;
-use crate::helpers::*;
+use crate::errors::*;
+use crate::helpers::{transfer_sol, transfer_tokens};
 use crate::states::{Buyer, Raffle, RaffleConfig, RaffleState};
 use crate::utils::calculate_max_tickets;
 use anchor_lang::prelude::*;
-use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
-pub fn buy_ticket(ctx: Context<BuyTicket>, raffle_id: u32, tickets_to_buy: u16) -> Result<()> {
+#[event]
+pub struct TicketPurchased {
+    pub raffle_id: u32,
+    pub buyer: Pubkey,
+    pub tickets_bought: u16,
+    pub price_paid: u64,
+    pub bought_time: i64,
+}
+
+pub fn buy_ticket(ctx: Context<BuyTicket>, _raffle_id: u32, tickets_to_buy: u16) -> Result<()> {
     let raffle = &mut ctx.accounts.raffle;
     let buyer_account = &mut ctx.accounts.buyer_account;
     let buyer = &ctx.accounts.buyer;
@@ -14,19 +22,23 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, raffle_id: u32, tickets_to_buy: u16) 
     let now = Clock::get()?.unix_timestamp;
 
     // Must be within start_time .. end_time
-    require_gte!(now, raffle.start_time, RaffleErrors::RaffleNotStarted);
-    require_gte!(raffle.end_time, now, RaffleErrors::RaffleAlreadyEnded);
-    require_gt!(tickets_to_buy, 0, RaffleErrors::InvalidZeroTickets);
+    require_gte!(
+        now,
+        raffle.start_time,
+        RaffleStateErrors::StartTimeNotReached
+    );
+    require_gte!(raffle.end_time, now, RaffleStateErrors::EndTimeIsCrossed);
+    require_gt!(tickets_to_buy, 0, RaffleStateErrors::InvalidZeroTickets);
 
     // Total supply cap: reject if not enough tickets left
     let remaining_tickets = raffle
         .total_tickets
         .checked_sub(raffle.tickets_sold)
-        .ok_or(RaffleErrors::Overflow)?;
+        .ok_or(RaffleStateErrors::Overflow)?;
     require_gte!(
         remaining_tickets,
         tickets_to_buy,
-        RaffleErrors::TicketsSoldOut
+        RaffleStateErrors::TicketsSoldOut
     );
 
     // max tickets can a single wallet can buy
@@ -36,12 +48,12 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, raffle_id: u32, tickets_to_buy: u16) 
     let new_buyer_tickets = buyer_account
         .tickets
         .checked_add(tickets_to_buy)
-        .ok_or(RaffleErrors::Overflow)?;
+        .ok_or(RaffleStateErrors::Overflow)?;
 
     require_gte!(
         max_tickets_can_buy,
         new_buyer_tickets,
-        RaffleErrors::MaxTicketsPerWalletExceeded
+        RaffleStateErrors::MaxTicketsPerWalletExceeded
     );
 
     // Initialize buyer account if it's the first time.
@@ -52,12 +64,12 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, raffle_id: u32, tickets_to_buy: u16) 
         require_keys_eq!(
             buyer_account.user,
             buyer.key(),
-            RaffleErrors::InvalidBuyerAccountUser
+            KeysMismatchErrors::InvalidBuyerAccountUser
         );
         require_eq!(
             buyer_account.raffle_id,
             raffle.raffle_id,
-            RaffleErrors::InvalidBuyerAccountRaffle
+            RaffleStateErrors::InvalidRaffleId
         );
     }
 
@@ -65,20 +77,20 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, raffle_id: u32, tickets_to_buy: u16) 
     raffle.tickets_sold = raffle
         .tickets_sold
         .checked_add(tickets_to_buy)
-        .ok_or(RaffleErrors::Overflow)?;
+        .ok_or(RaffleStateErrors::Overflow)?;
     buyer_account.tickets = new_buyer_tickets;
 
     // total ticket price have to pay = num of tickets * ticket_prize
     let intermediate = (raffle.ticket_price as u128)
         .checked_mul(tickets_to_buy as u128)
-        .ok_or(RaffleErrors::Overflow)?;
+        .ok_or(RaffleStateErrors::Overflow)?;
     let price_to_pay: u64 = intermediate
         .try_into()
-        .map_err(|_| RaffleErrors::Overflow)?;
+        .map_err(|_| RaffleStateErrors::Overflow)?;
 
     // SOL ticket (ticket_mint == None) => pay to raffle PDA lamports
     if raffle.ticket_mint.is_none() {
-        transfer_sol_from_signer(
+        transfer_sol(
             buyer,
             &raffle.to_account_info(),
             &ctx.accounts.system_program,
@@ -86,52 +98,55 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, raffle_id: u32, tickets_to_buy: u16) 
         )?;
     } else {
         // SPL ticket => transfer from buyer ATA to ticket_escrow ATA
-        let ticket_mint = raffle.ticket_mint.ok_or(RaffleErrors::MissingTicketMint)?;
-
-        // Deserialize accounts for validation and CPI
-        let ticket_escrow = InterfaceAccount::<TokenAccount>::try_from(
-            &ctx.accounts.ticket_escrow.to_account_info(),
-        )?;
-        let buyer_ticket_ata = InterfaceAccount::<TokenAccount>::try_from(
-            &ctx.accounts.buyer_ticket_ata.to_account_info(),
-        )?;
-        let ticket_token_program = InterfaceAccount::<TokenInterface>::try_from(
-            &ctx.accounts.ticket_token_program.to_account_info(),
-        )?;
-
+        let stored_ticket_mint = raffle
+            .ticket_mint
+            .ok_or(KeysMismatchErrors::MissingTicketMint)?;
         // Ensure we are using the correct escrow ATA
         let stored_ticket_escrow = raffle
             .ticket_escrow
-            .ok_or(RaffleErrors::MissingTicketEscrow)?;
+            .ok_or(KeysMismatchErrors::MissingTicketEscrow)?;
+
+        // Deserialize accounts for validation and CPI
+        let ticket_mint = &ctx.accounts.ticket_mint;
+        let ticket_escrow = &ctx.accounts.ticket_escrow;
+        let buyer_ticket_ata = &ctx.accounts.buyer_ticket_ata;
+        let ticket_token_program = &ctx.accounts.ticket_token_program;
+
         require_keys_eq!(
             ticket_escrow.key(),
             stored_ticket_escrow,
-            RaffleErrors::InvalidTicketEscrow
+            KeysMismatchErrors::InvalidTicketEscrow
+        );
+        require_keys_eq!(
+            ticket_mint.key(),
+            stored_ticket_mint,
+            KeysMismatchErrors::InvalidTicketMint
         );
 
         // Basic ATA sanity: owner = buyer, mint = raffle.ticket_mint
         require_keys_eq!(
             buyer_ticket_ata.owner,
             buyer.key(),
-            RaffleErrors::InvalidBuyerTicketAtaOwner
+            KeysMismatchErrors::InvalidTicketAtaOwner
         );
         require_keys_eq!(
             buyer_ticket_ata.mint,
-            ticket_mint,
-            RaffleErrors::InvalidBuyerTicketAtaMint
+            stored_ticket_mint,
+            KeysMismatchErrors::InvalidTicketMint
         );
         require_keys_eq!(
-            ticket_escrow.token_program,
-            ticket_token_program.key(),
-            RaffleErrors::InvalidTokenProgram
+            ticket_escrow.owner,
+            raffle.key(),
+            KeysMismatchErrors::InvalidTicketEscrowOwner
         );
 
         // Transfer SPL tokens from buyer to raffle ticket escrow
         transfer_tokens(
-            &buyer_ticket_ata,
-            &ticket_escrow,
+            buyer_ticket_ata,
+            ticket_escrow,
             buyer,
-            &ticket_token_program,
+            ticket_token_program,
+            ticket_mint,
             price_to_pay,
         )?;
     }
@@ -142,6 +157,7 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, raffle_id: u32, tickets_to_buy: u16) 
         buyer: buyer.key(),
         tickets_bought: tickets_to_buy,
         price_paid: price_to_pay,
+        bought_time: now,
     });
 
     Ok(())
@@ -154,7 +170,7 @@ pub struct BuyTicket<'info> {
         mut,
         seeds = [b"raffle"],
         bump = raffle_config.config_bump,
-        constraint = raffle_config.raffle_admin == raffle_admin.key() @ RaffleErrors::InvalidRaffleAdmin,
+        constraint = raffle_config.raffle_admin == raffle_admin.key() @ ConfigStateErrors::InvalidRaffleAdmin,
     )]
     pub raffle_config: Box<Account<'info, RaffleConfig>>,
 
@@ -162,7 +178,7 @@ pub struct BuyTicket<'info> {
         mut,
         seeds = [b"raffle", raffle_id.to_le_bytes().as_ref()],
         bump = raffle.raffle_bump,
-        constraint = raffle.status == RaffleState::Active @ RaffleErrors::RaffleNotActive,
+        constraint = raffle.status == RaffleState::Active @ RaffleStateErrors::RaffleNotActive,
     )]
     pub raffle: Box<Account<'info, Raffle>>,
 
@@ -184,15 +200,18 @@ pub struct BuyTicket<'info> {
 
     pub raffle_admin: Signer<'info>,
 
-    /// Buyer ATA for ticket mint (used only if raffle.ticket_mint.is_some())
-    #[account(mut)]
-    pub buyer_ticket_ata: UncheckedAccount<'info>,
+    // buyer pays the amount with this mint and this mint hsould be match with raffle stored ticket_mint key
+    pub ticket_mint: InterfaceAccount<'info, Mint>,
 
-    /// Ticket escrow ATA owned by raffle PDA (for SPL tickets)
+    // Buyer ATA for ticket mint (used only if raffle.ticket_mint.is_some())
     #[account(mut)]
-    pub ticket_escrow: UncheckedAccount<'info>,
+    pub buyer_ticket_ata: InterfaceAccount<'info, TokenAccount>,
 
-    pub ticket_token_program: UncheckedAccount<'info>,
+    // Ticket escrow ATA owned by raffle PDA (for SPL tickets)
+    #[account(mut)]
+    pub ticket_escrow: InterfaceAccount<'info, TokenAccount>,
+
+    pub ticket_token_program: Interface<'info, TokenInterface>,
 
     pub system_program: Program<'info, System>,
 }

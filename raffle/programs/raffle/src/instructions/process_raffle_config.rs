@@ -1,4 +1,4 @@
-use crate::errors::RaffleErrors;
+use crate::errors::ConfigStateErrors;
 use crate::states::RaffleConfig;
 use anchor_lang::prelude::*;
 
@@ -10,24 +10,10 @@ pub fn initialize_raffle_config(
     ticket_fee_bps: u16,
     minimum_raffle_period: u32,
     maximum_raffle_period: u32,
-    minimum_tickets: u16,
-    maximum_tickets: u16,
-    maximum_wallet_pct: u8,
-    maximum_winners_count: u8,
 ) -> Result<()> {
     require!(
         minimum_raffle_period > 0 && maximum_raffle_period > minimum_raffle_period,
-        RaffleErrors::InvalidRafflePeriod
-    );
-    require!(
-        minimum_tickets > 0 && maximum_tickets > minimum_tickets,
-        RaffleErrors::InvalidRaffleTickets
-    );
-    require_gt!(maximum_wallet_pct, 0, RaffleErrors::InvalidMaximumWalletPCT);
-    require_gt!(
-        maximum_winners_count,
-        0,
-        RaffleErrors::InvalidMaximumWinnersCount
+        ConfigStateErrors::InvalidRafflePeriod
     );
 
     let raffle_config = &mut ctx.accounts.raffle_config;
@@ -38,10 +24,6 @@ pub fn initialize_raffle_config(
     raffle_config.ticket_fee_bps = ticket_fee_bps;
     raffle_config.minimum_raffle_period = minimum_raffle_period;
     raffle_config.maximum_raffle_period = maximum_raffle_period;
-    raffle_config.minimum_tickets = minimum_tickets;
-    raffle_config.maximum_tickets = maximum_tickets;
-    raffle_config.maximum_wallet_pct = maximum_wallet_pct;
-    raffle_config.maximum_winners_count = maximum_winners_count;
     raffle_config.raffle_count = 1;
     raffle_config.config_bump = ctx.bumps.raffle_config;
 
@@ -53,7 +35,9 @@ pub fn update_raffle_config_owner(
     new_raffle_owner: Pubkey,
 ) -> Result<()> {
     let raffle_config = &mut ctx.accounts.raffle_config;
+
     raffle_config.raffle_owner = new_raffle_owner;
+
     Ok(())
 }
 
@@ -62,7 +46,9 @@ pub fn update_raffle_config_admin(
     new_raffle_admin: Pubkey,
 ) -> Result<()> {
     let raffle_config = &mut ctx.accounts.raffle_config;
+
     raffle_config.raffle_admin = new_raffle_admin;
+
     Ok(())
 }
 
@@ -72,24 +58,10 @@ pub fn update_raffle_config_data(
     ticket_fee_bps: u16,
     minimum_raffle_period: u32,
     maximum_raffle_period: u32,
-    minimum_tickets: u16,
-    maximum_tickets: u16,
-    maximum_wallet_pct: u8,
-    maximum_winners_count: u8,
 ) -> Result<()> {
     require!(
         minimum_raffle_period > 0 && maximum_raffle_period > minimum_raffle_period,
-        RaffleErrors::InvalidRafflePeriod
-    );
-    require!(
-        minimum_tickets > 0 && maximum_tickets > minimum_tickets,
-        RaffleErrors::InvalidRaffleTickets
-    );
-    require_gt!(maximum_wallet_pct, 0, RaffleErrors::InvalidMaximumWalletPCT);
-    require_gt!(
-        maximum_winners_count,
-        0,
-        RaffleErrors::InvalidMaximumWinnersCount
+        ConfigStateErrors::InvalidRafflePeriod
     );
 
     let raffle_config = &mut ctx.accounts.raffle_config;
@@ -98,10 +70,6 @@ pub fn update_raffle_config_data(
     raffle_config.ticket_fee_bps = ticket_fee_bps;
     raffle_config.minimum_raffle_period = minimum_raffle_period;
     raffle_config.maximum_raffle_period = maximum_raffle_period;
-    raffle_config.minimum_tickets = minimum_tickets;
-    raffle_config.maximum_tickets = maximum_tickets;
-    raffle_config.maximum_wallet_pct = maximum_wallet_pct;
-    raffle_config.maximum_winners_count = maximum_winners_count;
 
     Ok(())
 }
@@ -129,7 +97,7 @@ pub struct UpdateRaffleConfig<'info> {
         mut,
         seeds = [b"raffle"],
         bump = raffle_config.config_bump,
-        constraint =  raffle_owner.key() == raffle_config.raffle_owner @RaffleErrors::InvalidRaffleOwner
+        constraint =  raffle_owner.key() == raffle_config.raffle_owner @ConfigStateErrors::InvalidRaffleOwner
     )]
     pub raffle_config: Box<Account<'info, RaffleConfig>>,
 

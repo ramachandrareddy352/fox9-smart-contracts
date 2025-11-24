@@ -1,11 +1,36 @@
 use crate::constants::*;
-use crate::errors::RaffleErrors;
-use crate::states::{PrizeType, Raffle, RaffleConfig, RaffleState};
-use crate::utils::has_duplicate_pubkeys;
+use crate::errors::{ConfigStateErrors, KeysMismatchErrors, RaffleStateErrors};
+use crate::helpers::{transfer_sol_with_seeds, transfer_tokens_with_seeds};
+use crate::states::*;
+use crate::utils::{get_pct_amount, has_duplicate_pubkeys};
 use anchor_lang::prelude::*;
+use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
-pub fn announce_winner(
-    ctx: Context<AnnounceWinner>,
+#[event]
+pub struct ColledtedTicketRevenue {
+    pub raffle_id: u32,
+    pub creator_amount: u64,
+    pub fee_amount: u64,
+    pub total_tickets_sold: u16,
+}
+
+#[event]
+pub struct WinnersAnnounced {
+    pub raffle_id: u32,
+    pub effective_winners: u8,
+    pub claimable_prize_back: u64,
+    pub announce_time: i64,
+}
+
+#[event]
+pub struct RaffleFailed {
+    pub raffle_id: u32,
+    pub claimable_prize_back: u64,
+    pub announce_time: i64,
+}
+
+pub fn announce_winners(
+    mut ctx: Context<AnnounceWinners>,
     raffle_id: u32,
     winners: Vec<Pubkey>,
 ) -> Result<()> {
@@ -14,213 +39,206 @@ pub fn announce_winner(
     // ---------- Validations ----------
     require!(
         raffle.status == RaffleState::Active,
-        RaffleErrors::RaffleNotActive
+        RaffleStateErrors::RaffleNotActive
     );
 
     let now = Clock::get()?.unix_timestamp;
-    require_gt!(now, raffle.end_time, RaffleErrors::RaffleNotEnded);
+    require_gt!(now, raffle.end_time, RaffleStateErrors::EndTimeNotReached);
 
     let tickets_sold = raffle.tickets_sold;
-    let num_winners = raffle.num_winners;
+    let num_winners = raffle.num_winners as usize;
+    let prize_amount = raffle.prize_amount;
 
     // ---------- If zero tickets sold (FAILED) ----------
     if tickets_sold == 0 {
+        emit!(RaffleFailed {
+            raffle_id,
+            claimable_prize_back: prize_amount,
+            announce_time: now,
+        });
         raffle.status = RaffleState::FailedEnded;
-        raffle.claimable_prize_back = raffle.prize_amount;
-
-        // claimable back amount is collected by another function
+        raffle.claimable_prize_back = prize_amount;
         return Ok(());
     }
 
     // ---------------- NFT Only ----------------
     if raffle.prize_type == PrizeType::Nft {
-        require!(winners.len() == 1, RaffleErrors::InvalidWinnersLength);
-
+        require!(winners.len() == 1, RaffleStateErrors::InvalidWinnersLength);
         raffle.winners = winners;
         raffle.status = RaffleState::SuccessEnded;
 
-        // --- PROCESS TICKET REVENUE TRANSFERS ---
-        process_ticket_revenue(&ctx, tickets_sold)?;
+        process_ticket_revenue(&mut ctx, tickets_sold)?; // ← now &mut
 
         emit!(WinnersAnnounced {
-            raffle_id: raffle.raffle_id,
-            total_tickets_sold: tickets_sold as u16,
+            raffle_id,
             effective_winners: 1,
             claimable_prize_back: 0,
+            announce_time: now,
         });
-
         return Ok(());
     }
 
     // ---------------- SPL or SOL Prize Path ----------------
     let sold_usize = tickets_sold as usize;
-    let actual_winners = sold_usize.min(num_winners_cfg);
+    let actual_winners = sold_usize.min(num_winners);
+
     require!(
         winners.len() == actual_winners,
-        RaffleErrors::InvalidWinnersLength
+        RaffleStateErrors::InvalidWinnersLength
     );
 
     if raffle.is_unique_winners {
         require!(
             !has_duplicate_pubkeys(&winners),
-            RaffleErrors::DuplicateWinnersNotAllowed
+            RaffleStateErrors::DuplicateWinnersNotAllowed
         );
     }
 
     let mut claimable_back: u64 = 0;
-    let total_pct = TOTAL_PCT as u64;
+    let total_pct = TOTAL_PCT;
 
-    if sold_usize < num_winners_cfg {
-        let assigned_pct: u64 = raffle
-            .win_shares
-            .iter()
-            .take(actual_winners)
-            .map(|&s| s as u64)
-            .sum();
-        require!(assigned_pct <= total_pct, RaffleErrors::InvalidWinShares);
+    if sold_usize < num_winners {
+        let assigned_pct: u8 = raffle.win_shares.iter().take(actual_winners).copied().sum();
+
+        require!(
+            assigned_pct <= total_pct,
+            RaffleStateErrors::InvalidWinShares
+        );
 
         let leftover_pct = total_pct
             .checked_sub(assigned_pct)
-            .ok_or(RaffleErrors::Overflow)?;
+            .ok_or(RaffleStateErrors::Overflow)?;
 
-        if (leftover_pct > 0) {
-            claimable_back = get_pct_amount(prize_amount, leftover_pct, total_pct)?;
+        if leftover_pct > 0 {
+            claimable_back = get_pct_amount(prize_amount, leftover_pct as u64, total_pct as u64)?;
         }
     }
+
+    emit!(WinnersAnnounced {
+        raffle_id,
+        effective_winners: actual_winners as u8,
+        claimable_prize_back: claimable_back,
+        announce_time: now,
+    });
 
     raffle.claimable_prize_back = claimable_back;
     raffle.winners = winners;
     raffle.status = RaffleState::SuccessEnded;
 
-    // Process revenue transfers → fees + creator
-    process_ticket_revenue(&ctx, tickets_sold)?;
-
-    emit!(WinnersAnnounced {
-        raffle_id: raffle.raffle_id,
-        total_tickets_sold: tickets_sold as u16,
-        effective_winners: actual_winners as u8,
-        claimable_prize_back,
-    });
+    // Process revenue transfers (fees + creator share)
+    process_ticket_revenue(&mut ctx, tickets_sold)?; // ← &mut Context
 
     Ok(())
 }
 
-fn process_ticket_revenue<'info>(ctx: &Context<AnnounceWinner>, tickets_sold: u64) -> Result<()> {
+// Fixed signature + fixed temporary borrow in seeds
+fn process_ticket_revenue(ctx: &mut Context<AnnounceWinners>, tickets_sold: u16) -> Result<()> {
     let raffle = &mut ctx.accounts.raffle;
     let raffle_config = &ctx.accounts.raffle_config;
     let system_program = &ctx.accounts.system_program;
 
     let total_revenue = raffle
         .ticket_price
-        .checked_mul(tickets_sold)
-        .ok_or(RaffleErrors::Overflow)?;
+        .checked_mul(tickets_sold as u64)
+        .ok_or(RaffleStateErrors::Overflow)?;
 
-    let fee_amount = get_pct_amount(total_revenue, raffle_config.ticket_fee_bps, FEE_MANTISSA)?;
+    let fee_amount = get_pct_amount(
+        total_revenue,
+        raffle_config.ticket_fee_bps as u64,
+        FEE_MANTISSA as u64,
+    )?;
 
     let creator_amount = total_revenue
         .checked_sub(fee_amount)
-        .ok_or(RaffleErrors::Overflow)?;
+        .ok_or(RaffleStateErrors::Overflow)?;
 
-    // PDA signer seeds
+    // Fix temporary borrow: store the bytes in a variable with longer lifetime
+    let raffle_id_bytes = raffle.raffle_id.to_le_bytes();
+
+    let signer_seeds: &[&[u8]] = &[b"raffle", &raffle_id_bytes, &[raffle.raffle_bump]];
+    let seeds: &[&[&[u8]]] = &[signer_seeds];
+
     let raffle_ai = raffle.to_account_info();
-    let signer_seeds: &[&[&[u8]]] = &[&[
-        b"raffle",
-        &raffle.raffle_id.to_le_bytes(),
-        &[raffle.raffle_bump],
-    ]];
 
-    // update the claimabel ticket amount for creator
+    // Update claimable amount for creator
     raffle.claimable_ticket_amount = creator_amount;
 
     match raffle.ticket_mint {
-        // --------------------------------------------------
-        // SOL: Fee is sent to config PDA
-        // creator: remaining ticket mint amount(total revenue - fees) to claimable_ticket_amount(this is claimed by creator in another function)
-        // --------------------------------------------------
         None => {
+            // SOL: transfer fee to config PDA
             transfer_sol_with_seeds(
                 &raffle_ai,
-                raffle_config.to_account_info(),
+                &raffle_config.to_account_info(),
                 system_program,
-                signer_seeds,
+                seeds,
                 fee_amount,
             )?;
         }
+        Some(stored_mint) => {
+            let escrow = &ctx.accounts.ticket_escrow;
+            let treasury = &ctx.accounts.ticket_fee_treasury;
+            let mint = &ctx.accounts.ticket_mint;
 
-        // --------------------------------------------------
-        // SPL: fees is sent to ATA owned by raffle_config PDA
-        // creator: remaining ticket mint amount(total revenue - fees) to claimable_ticket_amount(this is claimed by creator in another function)
-        // --------------------------------------------------
-        Some(stored_ticket_mint) => {
-            let ticket_escrow = &ctx.accounts.ticket_escrow;
-            let ticket_token_program = &ctx.accounts.ticket_token_program;
-            let ticket_fee_treasury = &ctx.accounts.ticket_fee_treasury;
-            let ticket_mint = &ctx.accounts.ticket_mint;
-
-            // Mint in state must match the provided ticket_mint
             require_keys_eq!(
-                ticket_escrow.mint,
-                stored_ticket_mint,
-                RaffleErrors::InvalidTicketMint
+                escrow.mint,
+                stored_mint,
+                KeysMismatchErrors::InvalidTicketMint
             );
             require_keys_eq!(
-                ticket_mint.key(),
-                stored_ticket_mint,
-                RaffleErrors::InvalidTicketMint
+                mint.key(),
+                stored_mint,
+                KeysMismatchErrors::InvalidTicketMint
             );
 
-            // Escrow must match what was stored in raffle
-            let stored_ticket_escrow = raffle
+            let stored_escrow = raffle
                 .ticket_escrow
-                .ok_or(RaffleErrors::MissingTicketEscrow)?;
+                .ok_or(KeysMismatchErrors::MissingTicketEscrow)?;
             require_keys_eq!(
-                ticket_escrow.key(),
-                stored_ticket_escrow,
-                RaffleErrors::InvalidTicketEscrow
+                escrow.key(),
+                stored_escrow,
+                KeysMismatchErrors::InvalidTicketEscrow
             );
 
-            // -------- Fee ATA (raffle_config, ticket_mint) --------
-            // ensure ATA is for (raffle_config, ticket_mint)
-            create_ata(
-                &ctx.accounts.raffle_admin.to_account_info(), // payer = admin
-                &ticket_fee_treasury.to_account_info(),
-                &raffle_config.to_account_info(), // owner = raffle_config PDA
-                &ticket_mint.to_account_info(),
-                &system_program.to_account_info(),
-                &ticket_token_program.to_account_info(),
-                &ctx.accounts.associated_token_program.to_account_info(),
-            )?;
+            require_keys_eq!(
+                treasury.owner,
+                raffle_config.key(),
+                KeysMismatchErrors::InvalidFeeTreasuryAtaOwner
+            );
+            require_keys_eq!(
+                treasury.mint,
+                stored_mint,
+                KeysMismatchErrors::InvalidTicketMint
+            );
 
-            // Confirm token-account owner is raffle_config
-            // No need to check this, because in create ata, if any values are changed then expected ata is different and return error
-            // require_keys_eq!(
-            //     ticket_fee_treasury.owner,
-            //     raffle_config.key(),
-            //     RaffleErrors::InvalidFeeTreasuryAtaOwner
-            // );
-
-            // --- Fee transfer: escrow -> ticket_fee_treasury ---
             transfer_tokens_with_seeds(
-                &ticket_escrow.to_account_info(),
-                &ticket_fee_treasury.to_account_info(),
-                &raffle_ai.to_account_info(),
-                &ticket_token_program.to_account_info(),
-                signer_seeds,
+                escrow,
+                treasury,
+                &raffle_ai,
+                &ctx.accounts.ticket_token_program,
+                mint,
+                seeds,
                 fee_amount,
             )?;
         }
     }
+
+    emit!(ColledtedTicketRevenue {
+        raffle_id: raffle.raffle_id,
+        creator_amount,
+        fee_amount,
+        total_tickets_sold: tickets_sold,
+    });
 
     Ok(())
 }
 
 #[derive(Accounts)]
 #[instruction(raffle_id: u32)]
-pub struct AnnounceWinner<'info> {
+pub struct AnnounceWinners<'info> {
     #[account(
         seeds = [b"raffle"],
         bump = raffle_config.config_bump,
-        constraint = raffle_config.raffle_admin == raffle_admin.key() @ RaffleErrors::InvalidRaffleAdmin,
+        constraint = raffle_config.raffle_admin == raffle_admin.key() @ ConfigStateErrors::InvalidRaffleAdmin,
     )]
     pub raffle_config: Box<Account<'info, RaffleConfig>>,
 
@@ -228,25 +246,24 @@ pub struct AnnounceWinner<'info> {
         mut,
         seeds = [b"raffle", raffle_id.to_le_bytes().as_ref()],
         bump = raffle.raffle_bump,
-        constraint = raffle.raffle_id == raffle_id @ RaffleErrors::InvalidRaffleId,
+        constraint = raffle.raffle_id == raffle_id @ RaffleStateErrors::InvalidRaffleId,
     )]
     pub raffle: Box<Account<'info, Raffle>>,
 
     #[account(mut)]
     pub raffle_admin: Signer<'info>,
 
-    pub ticket_mint: UncheckedAccount<'info>,
+    pub ticket_mint: InterfaceAccount<'info, Mint>,
 
     // ticket escrow owner is the raffle PDA if the ticket mint == sol
     #[account(mut)]
-    pub ticket_escrow: UncheckedAccount<'info>,
+    pub ticket_escrow: InterfaceAccount<'info, TokenAccount>,
 
     // fee(spl) is stored in config ata, fee treasury owner is the config PDA if the ticket mint != sol, or else the fee(sol) is directely stored in config PDA account
     #[account(mut)]
-    pub ticket_fee_treasury: UncheckedAccount<'info>,
+    pub ticket_fee_treasury: InterfaceAccount<'info, TokenAccount>,
 
-    pub ticket_token_program: UncheckedAccount<'info>,
+    pub ticket_token_program: Interface<'info, TokenInterface>,
 
-    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }

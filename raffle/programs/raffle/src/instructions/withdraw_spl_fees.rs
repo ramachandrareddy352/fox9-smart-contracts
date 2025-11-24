@@ -1,33 +1,28 @@
-use crate::errors::RaffleErrors;
+use crate::errors::ConfigStateErrors;
+use crate::helpers::transfer_tokens_with_seeds;
 use crate::states::RaffleConfig;
 use anchor_lang::prelude::*;
-use anchor_spl::associated_token::AssociatedToken;
-use anchor_spl::token_interface::{
-    transfer_checked, Mint, TokenAccount, TokenInterface, TransferChecked,
-};
+use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
-/// Withdraw SPL fee tokens stored inside the RaffleConfig PDA's ATA. Only the config owner can withdraw.
+#[event]
+pub struct SplFeesWithdrawn {
+    pub amount: u64,
+    pub mint: Pubkey,
+    pub receiver: Pubkey,
+}
+
+// Withdraw accumulated SPL fees from the treasury ATA, Only the raffle owner can withdraw
 pub fn withdraw_spl_fees(ctx: Context<WithdrawSplFees>, amount: u64) -> Result<()> {
     let config = &ctx.accounts.raffle_config;
-    let owner = &ctx.accounts.owner;
-    let fee_ata = &ctx.accounts.fee_treasury_ata;
 
-    // Check balance in PDA’s fee ATA
-    require_gte!(
-        fee_ata.amount,
-        amount,
-        RaffleErrors::InsufficientFundsForWithdrawal
-    );
-
-    // PDA signature seeds
     let signer_seeds: &[&[&[u8]]] = &[&[b"raffle", &[config.config_bump]]];
 
-    // Transfer SPL tokens (checked)
     transfer_tokens_with_seeds(
-        fee_ata,
-        &ctx.accounts.owner_fee_ata,
-        &config.to_account_info(),
+        &ctx.accounts.fee_treasury_ata,
+        &ctx.accounts.receiver_fee_ata,
+        &ctx.accounts.raffle_config.to_account_info(),
         &ctx.accounts.token_program,
+        &ctx.accounts.fee_mint,
         signer_seeds,
         amount,
     )?;
@@ -35,7 +30,7 @@ pub fn withdraw_spl_fees(ctx: Context<WithdrawSplFees>, amount: u64) -> Result<(
     emit!(SplFeesWithdrawn {
         amount,
         mint: ctx.accounts.fee_mint.key(),
-        receiver: ctx.accounts.owner_fee_ata.key(),
+        receiver: ctx.accounts.owner.key(),
     });
 
     Ok(())
@@ -47,37 +42,30 @@ pub struct WithdrawSplFees<'info> {
         mut,
         seeds = [b"raffle"],
         bump = raffle_config.config_bump,
-        constraint = raffle_config.raffle_owner == owner.key() @ RaffleErrors::InvalidRaffleOwner
+        constraint = raffle_config.raffle_owner == owner.key() @ ConfigStateErrors::InvalidRaffleOwner
     )]
-    pub raffle_config: Box<Account<'info, RaffleConfig>>,
+    pub raffle_config: Account<'info, RaffleConfig>,
 
-    /// Must be the raffle owner (NOT admin)
     #[account(mut)]
     pub owner: Signer<'info>,
 
-    /// Mint of the SPL token to withdraw
-    pub fee_mint: Box<InterfaceAccount<'info, Mint>>,
+    // The mint of the fee token being withdrawn
+    pub fee_mint: InterfaceAccount<'info, Mint>,
 
-    /// ATA owned by RaffleConfig PDA (SPL fees stored here)
+    // Treasury ATA (holds fees) — owned by raffle_config PDA
     #[account(
         mut,
-        token::mint = fee_mint,
-        token::authority = raffle_config,
-    )]
-    pub fee_treasury_ata: Box<InterfaceAccount<'info, TokenAccount>>,
-
-    /// Owner’s ATA (SPL fees will be transferred here)
-    #[account(
-        init_if_needed
-        payer = owner,
         associated_token::mint = fee_mint,
-        associated_token::authority = owner,
-        associated_token::token_program = token_program,
+        associated_token::authority = raffle_config,
     )]
-    pub owner_fee_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub fee_treasury_ata: InterfaceAccount<'info, TokenAccount>,
+
+    // Owner's ATA — will receive the fees
+    #[account(mut)]
+    pub receiver_fee_ata: InterfaceAccount<'info, TokenAccount>,
 
     // Programs
     pub token_program: Interface<'info, TokenInterface>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
+
     pub system_program: Program<'info, System>,
 }

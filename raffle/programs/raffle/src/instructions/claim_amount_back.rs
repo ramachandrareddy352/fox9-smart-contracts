@@ -1,53 +1,53 @@
-use crate::errors::RaffleErrors;
+use crate::errors::{ConfigStateErrors, KeysMismatchErrors, RaffleStateErrors};
 use crate::helpers::*;
-use crate::states::{PrizeType, Raffle, RaffleConfig, RaffleState};
+use crate::states::*;
 use anchor_lang::prelude::*;
-use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
-pub fn creator_claim_amount_back(
-    ctx: Context<CreatorClaimAmountBack>,
-    raffle_id: u32,
-) -> Result<()> {
+#[event]
+pub struct AmountClaimBack {
+    pub raffle_id: u32,
+    pub claimer: Pubkey,
+    pub prize_amount_claimable: u64,
+    pub ticket_amount_claimable: u64,
+    pub claimed_time: i64,
+}
+
+pub fn claim_amount_back(ctx: Context<ClaimAmountBack>, raffle_id: u32) -> Result<()> {
     let raffle = &mut ctx.accounts.raffle;
     let creator = &ctx.accounts.creator;
+    let now = Clock::get()?.unix_timestamp;
 
-    // Access control & identity
-    require_eq!(raffle.raffle_id, raffle_id, RaffleErrors::InvalidRaffleId);
-    require_keys_eq!(raffle.creator, creator.key(), RaffleErrors::InvalidCreator);
-
-    // Only in FailedEnded or SuccessEnded
     require!(
         matches!(
             raffle.status,
             RaffleState::FailedEnded | RaffleState::SuccessEnded
         ),
-        RaffleErrors::InvalidRaffleStateForClaimBack
+        RaffleStateErrors::RaffleNotEnded
     );
 
-    // Must have something to claim
     let prize_amount_claimable = raffle.claimable_prize_back;
     let ticket_amount_claimable = raffle.claimable_ticket_amount;
+
     require!(
         prize_amount_claimable > 0 || ticket_amount_claimable > 0,
-        RaffleErrors::NoClaimableAmounts
+        RaffleStateErrors::InvalidZeroAmount
     );
 
-    // Signer seeds for raffle PDA (authority of escrow / SOL)
-    let raffle_ai = raffle.to_account_info();
-    let signer_seeds: &[&[&[u8]]] = &[&[
+    // PDA seeds for signing transfers
+    let seeds: &[&[u8]] = &[
         b"raffle",
         &raffle.raffle_id.to_le_bytes(),
         &[raffle.raffle_bump],
-    ]];
+    ];
+    let signer_seeds = &[seeds];
 
-    // Claim prize back (leftover prize)
+    // --- Claim back leftover prize (FailedEnded or under-sold) ---
     if prize_amount_claimable > 0 {
         match raffle.prize_type {
             PrizeType::Sol => {
-                // SOL: transfer lamports from raffle PDA -> creator
                 transfer_sol_with_seeds(
-                    &raffle_ai,
+                    &raffle.to_account_info(),
                     &creator.to_account_info(),
                     &ctx.accounts.system_program,
                     signer_seeds,
@@ -55,220 +55,154 @@ pub fn creator_claim_amount_back(
                 )?;
             }
             PrizeType::Nft | PrizeType::Spl => {
-                // Deserialize accounts for validation and CPI
-                let prize_escrow = InterfaceAccount::<TokenAccount>::try_from(
-                    &ctx.accounts.prize_escrow.to_account_info(),
-                )?;
-                let prize_mint_acc =
-                    InterfaceAccount::<Mint>::try_from(&ctx.accounts.prize_mint.to_account_info())?;
-                let prize_token_program = InterfaceAccount::<TokenInterface>::try_from(
-                    &ctx.accounts.prize_token_program.to_account_info(),
-                )?;
-                let creator_prize_ata_raw = &ctx.accounts.creator_prize_ata.to_account_info();
-
-                let stored_mint = raffle.prize_mint.ok_or(RaffleErrors::MissingPrizeMint)?;
-
-                // Stored mint must match provided mint
-                require_keys_eq!(
-                    prize_mint_acc.key(),
-                    stored_mint,
-                    RaffleErrors::InvalidPrizeMint
-                );
-
-                // Stored escrow must match provided escrow
-                let stored_escrow = raffle
+                let stored_prize_mint = raffle
+                    .prize_mint
+                    .ok_or(KeysMismatchErrors::MissingPrizeMint)?;
+                let stored_prize_escrow = raffle
                     .prize_escrow
-                    .ok_or(RaffleErrors::MissingPrizeEscrow)?;
+                    .ok_or(KeysMismatchErrors::MissingPrizeEscrow)?;
+
+                // Validate stored keys
                 require_keys_eq!(
-                    prize_escrow.key(),
-                    stored_escrow,
-                    RaffleErrors::InvalidPrizeEscrow
+                    ctx.accounts.prize_mint.key(),
+                    stored_prize_mint,
+                    KeysMismatchErrors::InvalidPrizeMint
                 );
 
-                // Escrow must be owned by raffle PDA
+                // Validate prize escrow
+                let escrow = &ctx.accounts.prize_escrow;
                 require_keys_eq!(
-                    prize_escrow.owner,
+                    escrow.key(),
+                    stored_prize_escrow,
+                    KeysMismatchErrors::InvalidPrizeEscrow
+                );
+                require_keys_eq!(
+                    escrow.owner,
                     raffle.key(),
-                    RaffleErrors::InvalidPrizeEscrowOwner
+                    KeysMismatchErrors::InvalidPrizeEscrowOwner
                 );
-
-                // Mint of escrow must match prize_mint
                 require_keys_eq!(
-                    prize_escrow.mint,
-                    stored_mint,
-                    RaffleErrors::InvalidPrizeMint
+                    escrow.mint,
+                    stored_prize_mint,
+                    KeysMismatchErrors::InvalidPrizeMint
                 );
 
-                // Validate token program
+                // Final ATA validation
+                let creator_ata = &ctx.accounts.creator_prize_ata;
                 require_keys_eq!(
-                    prize_escrow.token_program,
-                    prize_token_program.key(),
-                    RaffleErrors::InvalidTokenProgram
+                    creator_ata.mint,
+                    stored_prize_mint,
+                    KeysMismatchErrors::InvalidPrizeMint
                 );
 
-                // Ensure creator ATA is the correct ATA for (creator, prize_mint)
-                // If not present, create it.
-                create_ata(
-                    &creator.to_account_info(),
-                    creator_prize_ata_raw,
-                    &creator.to_account_info(),
-                    &ctx.accounts.prize_mint.to_account_info(),
-                    &ctx.accounts.system_program.to_account_info(),
-                    &ctx.accounts.prize_token_program.to_account_info(),
-                    &ctx.accounts.associated_token_program.to_account_info(),
-                )?;
+                // Amount: NFT = 1, SPL = prize_amount_claimable
+                let amount = if raffle.prize_type == PrizeType::Nft {
+                    1u64
+                } else {
+                    prize_amount_claimable
+                };
 
-                // Deserialize creator_prize_ata after potential creation
-                let creator_prize_ata =
-                    InterfaceAccount::<TokenAccount>::try_from(creator_prize_ata_raw)?;
-
-                // Creator ATA must be owned by creator
-                require_keys_eq!(
-                    creator_prize_ata.owner,
-                    creator.key(),
-                    RaffleErrors::InvalidCreatorPrizeAtaOwner
-                );
-
-                // Creator ATA mint must match prize mint
-                require_keys_eq!(
-                    creator_prize_ata.mint,
-                    stored_mint,
-                    RaffleErrors::InvalidCreatorPrizeAtaMint
-                );
-
-                // Transfer SPL/NFT tokens from escrow -> creator ATA via raffle PDA authority
                 transfer_tokens_with_seeds(
-                    &prize_escrow,
-                    &creator_prize_ata,
-                    &raffle_ai,
-                    &prize_token_program,
+                    escrow,
+                    creator_ata,
+                    &raffle.to_account_info(),
+                    &ctx.accounts.prize_token_program,
+                    &ctx.accounts.prize_mint,
                     signer_seeds,
-                    prize_amount_claimable,
+                    amount,
                 )?;
             }
         }
     }
 
-    // Claim ticket revenue back (leftover tickets after fees)
+    // --- Claim ticket revenue (after platform fee) ---
     if ticket_amount_claimable > 0 {
         if raffle.ticket_mint.is_none() {
-            // SOL tickets: transfer lamports from raffle PDA -> creator
+            // SOL ticket revenue
             transfer_sol_with_seeds(
-                &raffle_ai,
+                &raffle.to_account_info(),
                 &creator.to_account_info(),
                 &ctx.accounts.system_program,
                 signer_seeds,
                 ticket_amount_claimable,
             )?;
         } else {
-            // SPL tickets: transfer tokens from ticket_escrow -> creator_ticket_ata
-            // Deserialize accounts for validation and CPI
-            let ticket_escrow = InterfaceAccount::<TokenAccount>::try_from(
-                &ctx.accounts.ticket_escrow.to_account_info(),
-            )?;
-            let ticket_mint_acc =
-                InterfaceAccount::<Mint>::try_from(&ctx.accounts.ticket_mint.to_account_info())?;
-            let ticket_token_program = InterfaceAccount::<TokenInterface>::try_from(
-                &ctx.accounts.ticket_token_program.to_account_info(),
-            )?;
-            let creator_ticket_ata_raw = &ctx.accounts.creator_ticket_ata.to_account_info();
-
-            let stored_ticket_mint = raffle.ticket_mint.ok_or(RaffleErrors::MissingTicketMint)?;
-
-            // Stored mint must match provided mint
-            require_keys_eq!(
-                ticket_mint_acc.key(),
-                stored_ticket_mint,
-                RaffleErrors::InvalidTicketMint
-            );
-
-            // Stored escrow must match provided escrow
-            let stored_escrow = raffle
+            // SPL ticket revenue
+            let stored_ticket_mint = raffle
+                .ticket_mint
+                .ok_or(KeysMismatchErrors::MissingTicketMint)?;
+            let stored_ticket_escrow = raffle
                 .ticket_escrow
-                .ok_or(RaffleErrors::MissingTicketEscrow)?;
+                .ok_or(KeysMismatchErrors::MissingTicketEscrow)?;
+
+            // Validate ticket mint
             require_keys_eq!(
-                ticket_escrow.key(),
-                stored_escrow,
-                RaffleErrors::InvalidTicketEscrow
+                ctx.accounts.ticket_mint.key(),
+                stored_ticket_mint,
+                KeysMismatchErrors::InvalidTicketMint
             );
 
-            // Escrow must be owned by raffle PDA
+            // Validate ticket escrow
+            let escrow = &ctx.accounts.ticket_escrow;
             require_keys_eq!(
-                ticket_escrow.owner,
+                escrow.key(),
+                stored_ticket_escrow,
+                KeysMismatchErrors::InvalidTicketEscrow
+            );
+            require_keys_eq!(
+                escrow.owner,
                 raffle.key(),
-                RaffleErrors::InvalidTicketEscrowOwner
+                KeysMismatchErrors::InvalidTicketAtaOwner
             );
-
-            // Mint of escrow must match ticket_mint
             require_keys_eq!(
-                ticket_escrow.mint,
+                escrow.mint,
                 stored_ticket_mint,
-                RaffleErrors::InvalidTicketMint
+                KeysMismatchErrors::InvalidTicketMint
             );
 
-            // Validate token program
+            // Final ATA validation
+            let creator_ata = &ctx.accounts.creator_ticket_ata;
             require_keys_eq!(
-                ticket_escrow.token_program,
-                ticket_token_program.key(),
-                RaffleErrors::InvalidTokenProgram
-            );
-
-            // Ensure creator_ticket_ata is the correct ATA for (creator, ticket_mint)
-            // If not present, create it.
-            create_ata(
-                &creator.to_account_info(),
-                creator_ticket_ata_raw,
-                &creator.to_account_info(),
-                &ctx.accounts.ticket_mint.to_account_info(),
-                &ctx.accounts.system_program.to_account_info(),
-                &ctx.accounts.ticket_token_program.to_account_info(),
-                &ctx.accounts.associated_token_program.to_account_info(),
-            )?;
-
-            // Deserialize creator_ticket_ata after potential creation
-            let creator_ticket_ata =
-                InterfaceAccount::<TokenAccount>::try_from(creator_ticket_ata_raw)?;
-
-            // Creator ATA must be owned by creator
-            require_keys_eq!(
-                creator_ticket_ata.owner,
-                creator.key(),
-                RaffleErrors::InvalidCreatorTicketAtaOwner
-            );
-
-            // Creator ATA mint must match ticket mint
-            require_keys_eq!(
-                creator_ticket_ata.mint,
+                creator_ata.mint,
                 stored_ticket_mint,
-                RaffleErrors::InvalidCreatorTicketAtaMint
+                KeysMismatchErrors::InvalidTicketMint
             );
 
-            // Transfer SPL tokens from ticket_escrow -> creator_ticket_ata via raffle PDA authority
             transfer_tokens_with_seeds(
-                &ticket_escrow,
-                &creator_ticket_ata,
-                &raffle_ai,
-                &ticket_token_program,
+                escrow,
+                creator_ata,
+                &raffle.to_account_info(),
+                &ctx.accounts.ticket_token_program,
+                &ctx.accounts.ticket_mint,
                 signer_seeds,
                 ticket_amount_claimable,
             )?;
         }
     }
 
-    // Reset claimable amounts so it can't be claimed again
+    // --- Reset claimable amounts (prevent double claim) ---
     raffle.claimable_prize_back = 0;
     raffle.claimable_ticket_amount = 0;
+
+    // --- Emit event ---
+    emit!(AmountClaimBack {
+        raffle_id,
+        claimer: creator.key(),
+        prize_amount_claimable,
+        ticket_amount_claimable,
+        claimed_time: now,
+    });
 
     Ok(())
 }
 
 #[derive(Accounts)]
 #[instruction(raffle_id: u32)]
-pub struct CreatorClaimAmountBack<'info> {
+pub struct ClaimAmountBack<'info> {
     #[account(
         seeds = [b"raffle"],
         bump = raffle_config.config_bump,
-        constraint = raffle_config.raffle_admin == raffle_admin.key() @ RaffleErrors::InvalidRaffleAdmin,
+        constraint = raffle_config.raffle_admin == raffle_admin.key() @ ConfigStateErrors::InvalidRaffleAdmin,
     )]
     pub raffle_config: Box<Account<'info, RaffleConfig>>,
 
@@ -276,40 +210,42 @@ pub struct CreatorClaimAmountBack<'info> {
         mut,
         seeds = [b"raffle", raffle_id.to_le_bytes().as_ref()],
         bump = raffle.raffle_bump,
-        constraint = raffle.creator == creator.key() @ RaffleErrors::InvalidCreator,
+        constraint = raffle.raffle_id == raffle_id @ RaffleStateErrors::InvalidRaffleId,
     )]
     pub raffle: Box<Account<'info, Raffle>>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = creator.key() == raffle.creator @ RaffleStateErrors::InvalidCreator,
+    )]
     pub creator: Signer<'info>,
 
     pub raffle_admin: Signer<'info>,
 
-    /// Prize mint for SPL/NFT (unused for SOL)
-    pub prize_mint: UncheckedAccount<'info>,
+    // Prize mint for SPL/NFT (unused for SOL)
+    pub prize_mint: InterfaceAccount<'info, Mint>,
 
-    /// Ticket mint for SPL (unused for SOL)
-    pub ticket_mint: UncheckedAccount<'info>,
+    // Ticket mint for SPL (unused for SOL)
+    pub ticket_mint: InterfaceAccount<'info, Mint>,
 
-    /// Prize escrow ATA owned by raffle PDA (for SPL/NFT)
+    // Prize escrow ATA owned by raffle PDA (for SPL/NFT)
     #[account(mut)]
-    pub prize_escrow: UncheckedAccount<'info>,
+    pub prize_escrow: InterfaceAccount<'info, TokenAccount>,
 
-    /// Ticket escrow ATA owned by raffle PDA (for SPL)
+    // Ticket escrow ATA owned by raffle PDA (for SPL)
     #[account(mut)]
-    pub ticket_escrow: UncheckedAccount<'info>,
+    pub ticket_escrow: InterfaceAccount<'info, TokenAccount>,
 
-    /// Creator ATA for prize mint (may be created if missing)
+    // Creator ATA for prize mint (may be created if missing)
     #[account(mut)]
-    pub creator_prize_ata: UncheckedAccount<'info>,
+    pub creator_prize_ata: InterfaceAccount<'info, TokenAccount>,
 
-    /// Creator ATA for ticket mint (may be created if missing)
+    // Creator ATA for ticket mint (may be created if missing)
     #[account(mut)]
-    pub creator_ticket_ata: UncheckedAccount<'info>,
+    pub creator_ticket_ata: InterfaceAccount<'info, TokenAccount>,
 
-    pub prize_token_program: UncheckedAccount<'info>,
-    pub ticket_token_program: UncheckedAccount<'info>,
+    pub prize_token_program: Interface<'info, TokenInterface>,
+    pub ticket_token_program: Interface<'info, TokenInterface>,
 
-    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }

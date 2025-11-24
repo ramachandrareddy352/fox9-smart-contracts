@@ -1,7 +1,14 @@
-use crate::errors::RaffleErrors;
-use crate::raffle_math::is_descending_order_and_sum_100;
-use crate::states::{PrizeType, Raffle, RaffleConfig, RaffleState};
+use crate::errors::{ConfigStateErrors, RaffleStateErrors};
+use crate::states::*;
+use crate::utils::validate_win_shares;
 use anchor_lang::prelude::*;
+
+#[event]
+pub struct RaffleWinnersUpdated {
+    pub raffle_id: u32,
+    pub win_shares: Vec<u8>,
+    pub is_unique_winners: bool,
+}
 
 pub fn update_raffle_winners(
     ctx: Context<UpdateRaffleWinners>,
@@ -10,11 +17,6 @@ pub fn update_raffle_winners(
     new_is_unique_winners: bool,
 ) -> Result<()> {
     let raffle = &mut ctx.accounts.raffle;
-    let creator = &ctx.accounts.creator;
-
-    // Identity & access
-    require_eq!(raffle.raffle_id, raffle_id, RaffleErrors::InvalidRaffleId);
-    require_keys_eq!(raffle.creator, creator.key(), RaffleErrors::InvalidCreator);
 
     // Only allow updates before any tickets are sold
     require!(
@@ -22,31 +24,27 @@ pub fn update_raffle_winners(
             raffle.status,
             RaffleState::Initialized | RaffleState::Active
         ),
-        RaffleErrors::InvalidRaffleStateForUpdate
+        RaffleStateErrors::InvalidRaffleStateForUpdate
     );
-    require_eq!(raffle.tickets_sold, 0, RaffleErrors::TicketsAlreadySold);
+    require_eq!(raffle.tickets_sold, 0, RaffleStateErrors::TicketsSoldOut);
 
     // Cannot update winner shares for NFT prizes
     require!(
         raffle.prize_type != PrizeType::Nft,
-        RaffleErrors::CannotUpdateWinnersForNftPrize
+        RaffleStateErrors::CannotUpdateWinnersForNftPrize
     );
 
     // Validate win shares length and distribution
     require!(
-        new_win_shares.len() == raffle.num_winners as usize,
-        RaffleErrors::InvalidWinSharesLength
-    );
-    require!(
-        is_descending_order_and_sum_100(&new_win_shares),
-        RaffleErrors::InvalidWinShares
+        new_win_shares.len() == raffle.num_winners as usize && validate_win_shares(&new_win_shares),
+        RaffleStateErrors::InvalidWinShares
     );
 
     // Emit event before updating state
     emit!(RaffleWinnersUpdated {
         raffle_id,
-        new_win_shares: new_win_shares.clone(),
-        new_is_unique_winners,
+        win_shares: new_win_shares.clone(),
+        is_unique_winners: new_is_unique_winners,
     });
 
     // Apply updates
@@ -62,7 +60,7 @@ pub struct UpdateRaffleWinners<'info> {
     #[account(
         seeds = [b"raffle"],
         bump = raffle_config.config_bump,
-        constraint = raffle_config.raffle_admin == raffle_admin.key() @ RaffleErrors::InvalidRaffleAdmin,
+        constraint = raffle_config.raffle_admin == raffle_admin.key() @ ConfigStateErrors::InvalidRaffleAdmin,
     )]
     pub raffle_config: Box<Account<'info, RaffleConfig>>,
 
@@ -70,13 +68,13 @@ pub struct UpdateRaffleWinners<'info> {
         mut,
         seeds = [b"raffle", raffle_id.to_le_bytes().as_ref()],
         bump = raffle.raffle_bump,
-        constraint = raffle.raffle_id == raffle_id @ RaffleErrors::InvalidRaffleId,
+        constraint = raffle.raffle_id == raffle_id @ RaffleStateErrors::InvalidRaffleId,
     )]
     pub raffle: Box<Account<'info, Raffle>>,
 
     #[account(
         mut,
-        constraint = raffle.creator == creator.key() @ RaffleErrors::InvalidCreator,
+        constraint = raffle.creator == creator.key() @ RaffleStateErrors::InvalidCreator,
     )]
     pub creator: Signer<'info>,
 

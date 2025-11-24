@@ -1,7 +1,8 @@
-use crate::constants::*;
-use crate::errors::RaffleErrors;
+use crate::constants::TOTAL_PCT;
+use crate::errors::RaffleStateErrors;
 use anchor_lang::prelude::*;
 
+/// Check if any duplicate Pubkeys exist
 pub fn has_duplicate_pubkeys(list: &[Pubkey]) -> bool {
     for i in 0..list.len() {
         for j in (i + 1)..list.len() {
@@ -13,37 +14,53 @@ pub fn has_duplicate_pubkeys(list: &[Pubkey]) -> bool {
     false
 }
 
-pub fn calculate_max_tickets(
-    total_tickets: u16,
-    max_per_wallet_pct: u8,
-) -> Result<u16, RaffleErrors> {
+/// Calculate the maximum number of tickets a wallet can buy
+pub fn calculate_max_tickets(total_tickets: u16, max_per_wallet_pct: u8) -> Result<u16> {
     let total = total_tickets as u32;
     let pct = max_per_wallet_pct as u32;
-    let product = total.checked_mul(pct).ok_or(RaffleErrors::Overflow)?;
-    let numerator = product
-        .checked_add(99) // Ceiling division: ceil(product / 100)
-        .ok_or(RaffleErrors::Overflow)?;
-    let max_tickets = ((numerator / TOTAL_PCT) as u16).max(1); // Ensure at least 1
 
-    Ok(max_tickets)
+    let product = total.checked_mul(pct).ok_or(RaffleStateErrors::Overflow)?;
+
+    // Round up: (value + base - 1) / base
+    let max_tickets = ((product + (TOTAL_PCT as u32 - 1)) / TOTAL_PCT as u32) as u16;
+
+    Ok(max_tickets.max(1))
 }
 
-pub fn get_pct_amount(amount: u64, fees: u64, base: u64) -> Result<u64, RaffleErrors> {
-    let product = amount.checked_mul(fees).ok_or(RaffleErrors::Overflow)?;
-    product.checked_div(base).ok_or(RaffleErrors::Overflow)
+/// Calculate percentage-based amount safely: (amount * pct) / base
+pub fn get_pct_amount(amount: u64, pct: u64, base: u64) -> Result<u64> {
+    let mul = amount.checked_mul(pct).ok_or(RaffleStateErrors::Overflow)?;
+
+    let div = mul.checked_div(base).ok_or(RaffleStateErrors::Overflow)?;
+
+    Ok(div)
 }
 
+/// Validate win share list:
+/// - non-empty
+/// - max 10 shares
+/// - each share between 1 and 100
+/// - non-increasing
+/// - total == 100
 pub fn validate_win_shares(win_shares: &[u8]) -> bool {
+    if win_shares.is_empty() || win_shares.len() > 10 {
+        return false;
+    }
+
     let mut total: u16 = 0;
-    for i in 0..win_shares.len() {
-        let s = win_shares[i];
-        if s == 0 || s > 100 {
+
+    for (i, &share) in win_shares.iter().enumerate() {
+        if share == 0 || share > TOTAL_PCT {
             return false;
         }
-        if i > 0 && s > win_shares[i - 1] {
+
+        // must be non-increasing
+        if i > 0 && share > win_shares[i - 1] {
             return false;
-        } // non-increasing
-        total = total.checked_add(s as u16).unwrap_or(u16::MAX);
+        }
+
+        total = total.checked_add(share as u16).unwrap_or(u16::MAX);
     }
+
     total == TOTAL_PCT as u16
 }
