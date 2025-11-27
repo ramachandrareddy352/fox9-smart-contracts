@@ -1,9 +1,10 @@
+use anchor_lang::prelude::*;
+use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
+use crate::constants::*;
 use crate::errors::*;
 use crate::helpers::{transfer_sol, transfer_tokens};
 use crate::states::{Buyer, Raffle, RaffleConfig, RaffleState};
-use crate::utils::calculate_max_tickets;
-use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
+use crate::utils::{calculate_max_tickets, is_paused};
 
 #[event]
 pub struct TicketPurchased {
@@ -15,6 +16,11 @@ pub struct TicketPurchased {
 }
 
 pub fn buy_ticket(ctx: Context<BuyTicket>, _raffle_id: u32, tickets_to_buy: u16) -> Result<()> {
+    require!(
+        !is_paused(ctx.accounts.raffle_config.pause_flags, BUY_TICKET_PAUSE),
+        RaffleStateErrors::FunctionPaused
+    );
+
     let raffle = &mut ctx.accounts.raffle;
     let buyer_account = &mut ctx.accounts.buyer_account;
     let buyer = &ctx.accounts.buyer;

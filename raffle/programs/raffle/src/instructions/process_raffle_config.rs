@@ -1,6 +1,6 @@
+use anchor_lang::prelude::*;
 use crate::errors::ConfigStateErrors;
 use crate::states::RaffleConfig;
-use anchor_lang::prelude::*;
 
 pub fn initialize_raffle_config(
     ctx: Context<InitializeRaffleConfig>,
@@ -48,6 +48,17 @@ pub fn update_raffle_config_admin(
     let raffle_config = &mut ctx.accounts.raffle_config;
 
     raffle_config.raffle_admin = new_raffle_admin;
+
+    Ok(())
+}
+
+pub fn update_pause_and_unpause(
+    ctx: Context<UpdateRaffleConfig>,
+    new_pause_flags: u8,
+) -> Result<()> {
+    let raffle_config = &mut ctx.accounts.raffle_config;
+
+    raffle_config.pause_flags = new_pause_flags;
 
     Ok(())
 }

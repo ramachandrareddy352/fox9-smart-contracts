@@ -1,10 +1,10 @@
+use anchor_lang::prelude::*;
+use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 use crate::constants::*;
 use crate::errors::{ConfigStateErrors, KeysMismatchErrors, RaffleStateErrors};
 use crate::helpers::{transfer_sol_with_seeds, transfer_tokens_with_seeds};
 use crate::states::*;
-use crate::utils::{get_pct_amount, has_duplicate_pubkeys};
-use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
+use crate::utils::{get_pct_amount, has_duplicate_pubkeys, is_paused};
 
 #[event]
 pub struct ColledtedTicketRevenue {
@@ -35,6 +35,14 @@ pub fn announce_winners(
     winners: Vec<Pubkey>,
 ) -> Result<()> {
     let raffle = &mut ctx.accounts.raffle;
+
+    require!(
+        !is_paused(
+            ctx.accounts.raffle_config.pause_flags,
+            ANNOUNCE_WINNER_PAUSE
+        ),
+        RaffleStateErrors::FunctionPaused
+    );
 
     // ---------- Validations ----------
     require!(

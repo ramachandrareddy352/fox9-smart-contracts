@@ -1,7 +1,8 @@
+use anchor_lang::prelude::*;
+use crate::constants::UPDATE_RAFFLE_PAUSE;
 use crate::errors::{ConfigStateErrors, RaffleStateErrors};
 use crate::states::*;
-use crate::utils::validate_win_shares;
-use anchor_lang::prelude::*;
+use crate::utils::{is_paused, validate_win_shares};
 
 #[event]
 pub struct RaffleWinnersUpdated {
@@ -16,6 +17,11 @@ pub fn update_raffle_winners(
     new_win_shares: Vec<u8>,
     new_is_unique_winners: bool,
 ) -> Result<()> {
+    require!(
+        !is_paused(ctx.accounts.raffle_config.pause_flags, UPDATE_RAFFLE_PAUSE),
+        RaffleStateErrors::FunctionPaused
+    );
+
     let raffle = &mut ctx.accounts.raffle;
 
     // Only allow updates before any tickets are sold

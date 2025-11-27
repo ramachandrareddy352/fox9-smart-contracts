@@ -1,6 +1,7 @@
 use crate::constants::*;
 use crate::errors::{ConfigStateErrors, RaffleStateErrors};
 use crate::states::{Raffle, RaffleConfig, RaffleState};
+use crate::utils::is_paused;
 
 #[event]
 pub struct RaffleTicketingUpdated {
@@ -17,6 +18,11 @@ pub fn update_raffle_ticketing(
     new_ticket_price: u64,
     new_max_per_wallet_pct: u8,
 ) -> Result<()> {
+    require!(
+        !is_paused(ctx.accounts.raffle_config.pause_flags, UPDATE_RAFFLE_PAUSE),
+        RaffleStateErrors::FunctionPaused
+    );
+
     let raffle = &mut ctx.accounts.raffle;
 
     // Only Initialized or Active raffles can be updated

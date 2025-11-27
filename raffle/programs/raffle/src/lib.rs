@@ -41,6 +41,13 @@ pub mod raffle {
         process_raffle_config::update_raffle_config_owner(ctx, new_raffle_owner)
     }
 
+    pub fn update_pause_and_unpause(
+        ctx: Context<UpdateRaffleConfig>,
+        new_pause_flags: u8,
+    ) -> Result<()> {
+        process_raffle_config::update_pause_and_unpause(ctx, new_pause_flags)
+    }
+
     pub fn update_raffle_config_admin(
         ctx: Context<UpdateRaffleConfig>,
         new_raffle_admin: Pubkey,

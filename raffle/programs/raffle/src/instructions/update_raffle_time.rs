@@ -1,6 +1,8 @@
+use anchor_lang::prelude::*;
+use crate::constants::UPDATE_RAFFLE_PAUSE;
 use crate::errors::{ConfigStateErrors, RaffleStateErrors};
 use crate::states::{Raffle, RaffleConfig, RaffleState};
-use anchor_lang::prelude::*;
+use crate::utils::is_paused;
 
 #[event]
 pub struct RaffleTimeUpdated {
@@ -18,6 +20,11 @@ pub fn update_raffle_time(
 ) -> Result<()> {
     let config = &ctx.accounts.raffle_config;
     let raffle = &mut ctx.accounts.raffle;
+
+    require!(
+        !is_paused(config.pause_flags, UPDATE_RAFFLE_PAUSE),
+        RaffleStateErrors::FunctionPaused
+    );
 
     // Only Initialized raffles
     require!(

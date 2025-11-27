@@ -1,10 +1,10 @@
-use crate::constants::TOTAL_PCT;
+use anchor_lang::prelude::*;
+use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
+use crate::constants::{BUYER_CLAIM_PRIZE_PAUSE, TOTAL_PCT};
 use crate::errors::{ConfigStateErrors, KeysMismatchErrors, RaffleStateErrors};
 use crate::helpers::*;
 use crate::states::*;
-use crate::utils::get_pct_amount;
-use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
+use crate::utils::{get_pct_amount, is_paused};
 
 #[event]
 pub struct PrizeClaimed {
@@ -21,6 +21,14 @@ pub fn buyer_claim_prize(
     raffle_id: u32,
     winner_index: u8,
 ) -> Result<()> {
+    require!(
+        !is_paused(
+            ctx.accounts.raffle_config.pause_flags,
+            BUYER_CLAIM_PRIZE_PAUSE
+        ),
+        RaffleStateErrors::FunctionPaused
+    );
+
     let raffle = &mut ctx.accounts.raffle;
     let winner = &ctx.accounts.winner;
     let now = Clock::get()?.unix_timestamp;

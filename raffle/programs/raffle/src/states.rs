@@ -11,6 +11,7 @@ pub struct RaffleConfig {
     pub minimum_raffle_period: u32, // minimum period the raffle should be
     pub maximum_raffle_period: u32, // maximum peroid the raffle can be set
     pub raffle_count: u32,   // use the latest raffle count for seed, start from `1`
+    pub pause_flags: u8,   // pause the function using bit masking
     pub config_bump: u8,
 }
 

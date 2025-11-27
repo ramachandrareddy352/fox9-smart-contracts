@@ -8,6 +8,9 @@ pub enum RaffleStateErrors {
     #[msg("Invalid Raffle Creator")]
     InvalidCreator,
 
+    #[msg("Current function is paused")]
+    FunctionPaused,
+
     #[msg("Raffle is already started")]
     RaffleAlreadyStarted,
 

@@ -1,10 +1,10 @@
+use anchor_lang::prelude::*;
+use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 use crate::constants::*;
 use crate::errors::{ConfigStateErrors, KeysMismatchErrors, RaffleStateErrors};
 use crate::helpers::*;
 use crate::states::*;
-use crate::utils::validate_win_shares;
-use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
+use crate::utils::{is_paused, validate_win_shares};
 
 #[event]
 pub struct RaffleCreated {
@@ -31,6 +31,12 @@ pub fn create_raffle(
     start_raffle: bool,
 ) -> Result<()> {
     let config = &mut ctx.accounts.raffle_config;
+
+    require!(
+        !is_paused(config.pause_flags, CREATE_RAFFLE_PAUSE),
+        RaffleStateErrors::FunctionPaused
+    );
+
     let raffle = &mut ctx.accounts.raffle;
     let creator = &ctx.accounts.creator;
     let now = Clock::get()?.unix_timestamp;
@@ -128,16 +134,21 @@ pub fn create_raffle(
             raffle.prize_mint = None;
             raffle.prize_escrow = None;
 
-            let total_sol = prize_amount
-                .checked_add(config.creation_fee_lamports)
-                .ok_or(RaffleStateErrors::Overflow)?;
-
             transfer_sol(
                 creator,
                 &raffle.to_account_info(),
                 &ctx.accounts.system_program,
-                total_sol,
+                prize_amount,
             )?;
+
+            if config.creation_fee_lamports > 0 {
+                transfer_sol(
+                    creator,
+                    &config.to_account_info(),
+                    &ctx.accounts.system_program,
+                    config.creation_fee_lamports,
+                )?;
+            }
         }
 
         PrizeType::Nft | PrizeType::Spl => {
@@ -190,7 +201,7 @@ pub fn create_raffle(
             if config.creation_fee_lamports > 0 {
                 transfer_sol(
                     creator,
-                    &raffle.to_account_info(),
+                    &config.to_account_info(),
                     &ctx.accounts.system_program,
                     config.creation_fee_lamports,
                 )?;

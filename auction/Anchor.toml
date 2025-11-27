@@ -3,7 +3,7 @@ seeds = false
 skip-lint = false
 
 [programs.localnet]
-raffle = "4HY6XZvoKT8hBUST6Bssj9LZXbWK3RsUEW8qTbSHq4bS"
+auction = "E7x43w7pscmvUTemuzmW9w43CLggzC3axTrvHNPbCtK2"
 
 [registry]
 url = "https://api.apr.dev"

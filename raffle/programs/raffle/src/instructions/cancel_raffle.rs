@@ -1,8 +1,10 @@
+use anchor_lang::prelude::*;
+use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
+use crate::constants::CANCEL_RAFFLE_PAUSE;
 use crate::errors::{ConfigStateErrors, KeysMismatchErrors, RaffleStateErrors};
 use crate::helpers::*;
 use crate::states::*;
-use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
+use crate::utils::is_paused;
 
 #[event]
 pub struct RaffleCancelled {
@@ -12,6 +14,11 @@ pub struct RaffleCancelled {
 }
 
 pub fn cancel_raffle(ctx: Context<CancelRaffle>, _raffle_id: u32) -> Result<()> {
+    require!(
+        !is_paused(ctx.accounts.raffle_config.pause_flags, CANCEL_RAFFLE_PAUSE),
+        RaffleStateErrors::FunctionPaused
+    );
+
     let raffle = &mut ctx.accounts.raffle;
     let creator = &ctx.accounts.creator;
 

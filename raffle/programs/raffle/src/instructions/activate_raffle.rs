@@ -1,6 +1,8 @@
+use anchor_lang::prelude::*;
+use crate::constants::*;
 use crate::errors::{ConfigStateErrors, RaffleStateErrors};
 use crate::states::{Raffle, RaffleConfig, RaffleState};
-use anchor_lang::prelude::*;
+use crate::utils::is_paused;
 
 #[event]
 pub struct RaffleActivated {
@@ -10,6 +12,14 @@ pub struct RaffleActivated {
 
 pub fn activate_raffle(ctx: Context<ActivateRaffle>, _raffle_id: u32) -> Result<()> {
     let raffle = &mut ctx.accounts.raffle;
+
+    require!(
+        !is_paused(
+            ctx.accounts.raffle_config.pause_flags,
+            ACTIVATE_RAFFLE_PAUSE
+        ),
+        RaffleStateErrors::FunctionPaused
+    );
 
     // current state checks
     require!(
