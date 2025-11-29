@@ -1,10 +1,10 @@
-use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 use crate::constants::*;
 use crate::errors::{ConfigStateErrors, KeysMismatchErrors, RaffleStateErrors};
 use crate::helpers::*;
 use crate::states::*;
 use crate::utils::{is_paused, validate_win_shares};
+use anchor_lang::prelude::*;
+use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 #[event]
 pub struct RaffleCreated {
@@ -140,15 +140,6 @@ pub fn create_raffle(
                 &ctx.accounts.system_program,
                 prize_amount,
             )?;
-
-            if config.creation_fee_lamports > 0 {
-                transfer_sol(
-                    creator,
-                    &config.to_account_info(),
-                    &ctx.accounts.system_program,
-                    config.creation_fee_lamports,
-                )?;
-            }
         }
 
         PrizeType::Nft | PrizeType::Spl => {
@@ -197,19 +188,19 @@ pub fn create_raffle(
                 prize_amount,
             )?;
 
-            // Pay creation fee separately
-            if config.creation_fee_lamports > 0 {
-                transfer_sol(
-                    creator,
-                    &config.to_account_info(),
-                    &ctx.accounts.system_program,
-                    config.creation_fee_lamports,
-                )?;
-            }
-
             raffle.prize_mint = Some(prize_mint_key);
             raffle.prize_escrow = Some(prize_escrow.key());
         }
+    }
+
+    // Pay creation fee separately
+    if config.creation_fee_lamports > 0 {
+        transfer_sol(
+            creator,
+            &config.to_account_info(),
+            &ctx.accounts.system_program,
+            config.creation_fee_lamports,
+        )?;
     }
 
     // --- Ticket Escrow (only if SPL tickets) ---
