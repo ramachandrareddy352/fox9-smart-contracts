@@ -28,7 +28,7 @@ pub fn withdraw_sol_fees(ctx: Context<WithdrawSolFees>, amount: u64) -> Result<(
     // Transfer using your helper
     transfer_sol_with_seeds(
         &pda_ai,
-        &ctx.accounts.owner,
+        &ctx.accounts.receiver,
         &ctx.accounts.system_program,
         signer_seeds,
         amount,
@@ -36,7 +36,7 @@ pub fn withdraw_sol_fees(ctx: Context<WithdrawSolFees>, amount: u64) -> Result<(
 
     emit!(FeesWithdrawn {
         amount,
-        receiver: ctx.accounts.owner.key(),
+        receiver: ctx.accounts.receiver.key(),
     });
 
     Ok(())
@@ -55,6 +55,9 @@ pub struct WithdrawSolFees<'info> {
     // Must be the config owner (not admin)
     #[account(mut)]
     pub owner: Signer<'info>,
+
+    #[account(mut)]
+    pub receiver: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
 }

@@ -8,7 +8,7 @@ pub struct AuctionConfig {
 
     pub creation_fee_lamports: u64,
     pub commission_bps: u16,
-    
+
     pub minimum_auction_period: u32,
     pub maximum_auction_period: u32,
 
@@ -29,16 +29,14 @@ pub struct Auction {
 
     pub prize_mint: Pubkey,
     // check prize_escrow.owner == auction and prize_escrow.mint == prize_mint, while checking for prize escrow
-
     pub start_time: i64,
     pub end_time: i64,
 
     pub bid_mint: Option<Pubkey>, // None => SOL
     // check bid_escrow.owner == auction and bid_escrow.mint == bid_mint, while checking for bid escrow
-
     pub base_bid: u64,
-    pub min_increment: u64,     // min bidding increment
-    pub time_extension: u32, 
+    pub min_increment: u64, // min bidding increment
+    pub time_extension: u32,
 
     pub highest_bid_amount: u64,
     pub highest_bidder: Pubkey,
@@ -53,7 +51,7 @@ pub enum AuctionState {
     None,
     Initialized,
     Active,
-    Cancelled,  // when creator cancel the auction
+    Cancelled, // when creator cancel the auction
     CompletedSuccessfully,
     CompletedFailed,
 }
