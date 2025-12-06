@@ -1,5 +1,7 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
+use anchor_spl::token_interface::{
+    close_account, CloseAccount, Mint, TokenAccount, TokenInterface,
+};
 use crate::constants::CLAIM_AMOUNT_BACK_PAUSE;
 use crate::errors::{ConfigStateErrors, KeysMismatchErrors, RaffleStateErrors};
 use crate::helpers::*;
@@ -37,7 +39,9 @@ pub fn claim_amount_back(ctx: Context<ClaimAmountBack>, raffle_id: u32) -> Resul
     );
 
     let prize_amount_claimable = raffle.claimable_prize_back;
-    let ticket_amount_claimable = raffle.claimable_ticket_amount;
+    let ticket_amount_claimable = raffle
+        .claimable_ticket_amount
+        .max(ctx.accounts.ticket_escrow.amount); // remove all the dust to claim, the fees are already claimed, so we can clean all of them and close the account
 
     require!(
         prize_amount_claimable > 0 || ticket_amount_claimable > 0,
@@ -68,41 +72,26 @@ pub fn claim_amount_back(ctx: Context<ClaimAmountBack>, raffle_id: u32) -> Resul
                 let stored_prize_mint = raffle
                     .prize_mint
                     .ok_or(KeysMismatchErrors::MissingPrizeMint)?;
-                let stored_prize_escrow = raffle
-                    .prize_escrow
-                    .ok_or(KeysMismatchErrors::MissingPrizeEscrow)?;
 
-                // Validate stored keys
-                require_keys_eq!(
-                    ctx.accounts.prize_mint.key(),
-                    stored_prize_mint,
+                let prize_mint = &ctx.accounts.prize_mint;
+                let prize_escrow = &ctx.accounts.prize_escrow;
+                let creator_prize_ata = &ctx.accounts.creator_prize_ata;
+
+                require!(
+                    prize_mint.key() == stored_prize_mint
+                        && creator_prize_ata.mint == stored_prize_mint
+                        && prize_escrow.mint == stored_prize_mint,
                     KeysMismatchErrors::InvalidPrizeMint
                 );
-
-                // Validate prize escrow
-                let escrow = &ctx.accounts.prize_escrow;
                 require_keys_eq!(
-                    escrow.key(),
-                    stored_prize_escrow,
-                    KeysMismatchErrors::InvalidPrizeEscrow
-                );
-                require_keys_eq!(
-                    escrow.owner,
+                    prize_escrow.owner,
                     raffle.key(),
                     KeysMismatchErrors::InvalidPrizeEscrowOwner
                 );
                 require_keys_eq!(
-                    escrow.mint,
-                    stored_prize_mint,
-                    KeysMismatchErrors::InvalidPrizeMint
-                );
-
-                // Final ATA validation
-                let creator_ata = &ctx.accounts.creator_prize_ata;
-                require_keys_eq!(
-                    creator_ata.mint,
-                    stored_prize_mint,
-                    KeysMismatchErrors::InvalidPrizeMint
+                    creator_prize_ata.owner,
+                    creator.key(),
+                    KeysMismatchErrors::InvalidPrizeAtaOwner
                 );
 
                 // Amount: NFT = 1, SPL = prize_amount_claimable
@@ -113,11 +102,11 @@ pub fn claim_amount_back(ctx: Context<ClaimAmountBack>, raffle_id: u32) -> Resul
                 };
 
                 transfer_tokens_with_seeds(
-                    escrow,
-                    creator_ata,
+                    prize_escrow,
+                    creator_prize_ata,
                     &raffle.to_account_info(),
                     &ctx.accounts.prize_token_program,
-                    &ctx.accounts.prize_mint,
+                    prize_mint,
                     signer_seeds,
                     amount,
                 )?;
@@ -141,52 +130,50 @@ pub fn claim_amount_back(ctx: Context<ClaimAmountBack>, raffle_id: u32) -> Resul
             let stored_ticket_mint = raffle
                 .ticket_mint
                 .ok_or(KeysMismatchErrors::MissingTicketMint)?;
-            let stored_ticket_escrow = raffle
-                .ticket_escrow
-                .ok_or(KeysMismatchErrors::MissingTicketEscrow)?;
 
-            // Validate ticket mint
-            require_keys_eq!(
-                ctx.accounts.ticket_mint.key(),
-                stored_ticket_mint,
+            let ticket_mint = &ctx.accounts.ticket_mint;
+            let ticket_escrow = &ctx.accounts.ticket_escrow;
+            let creator_ticket_ata = &ctx.accounts.creator_ticket_ata;
+
+            require!(
+                ticket_mint.key() == stored_ticket_mint
+                    && creator_ticket_ata.mint == stored_ticket_mint
+                    && ticket_escrow.mint == stored_ticket_mint,
                 KeysMismatchErrors::InvalidTicketMint
             );
-
-            // Validate ticket escrow
-            let escrow = &ctx.accounts.ticket_escrow;
             require_keys_eq!(
-                escrow.key(),
-                stored_ticket_escrow,
-                KeysMismatchErrors::InvalidTicketEscrow
-            );
-            require_keys_eq!(
-                escrow.owner,
+                ticket_escrow.owner,
                 raffle.key(),
+                KeysMismatchErrors::InvalidTicketEscrowOwner
+            );
+            require_keys_eq!(
+                creator_ticket_ata.owner,
+                creator.key(),
                 KeysMismatchErrors::InvalidTicketAtaOwner
-            );
-            require_keys_eq!(
-                escrow.mint,
-                stored_ticket_mint,
-                KeysMismatchErrors::InvalidTicketMint
-            );
-
-            // Final ATA validation
-            let creator_ata = &ctx.accounts.creator_ticket_ata;
-            require_keys_eq!(
-                creator_ata.mint,
-                stored_ticket_mint,
-                KeysMismatchErrors::InvalidTicketMint
             );
 
             transfer_tokens_with_seeds(
-                escrow,
-                creator_ata,
+                ticket_escrow,
+                creator_ticket_ata,
                 &raffle.to_account_info(),
                 &ctx.accounts.ticket_token_program,
-                &ctx.accounts.ticket_mint,
+                ticket_mint,
                 signer_seeds,
                 ticket_amount_claimable,
             )?;
+
+            // --- CLOSE ESCROW ATA & RETURN RENT to creator ---
+            let cpi_ctx = CpiContext::new_with_signer(
+                ctx.accounts.ticket_token_program.to_account_info(), // token_program
+                CloseAccount {
+                    account: ticket_escrow.to_account_info(),
+                    destination: creator.to_account_info(),
+                    authority: raffle.to_account_info(),
+                },
+                signer_seeds,
+            );
+
+            close_account(cpi_ctx)?;
         }
     }
 

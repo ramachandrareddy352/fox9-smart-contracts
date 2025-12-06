@@ -1,7 +1,9 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
-use crate::constants::CANCEL_AUCTION_PAUSE;
 use anchor_spl::associated_token::AssociatedToken;
+use anchor_spl::token::{close_account, CloseAccount};
+use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
+
+use crate::constants::CANCEL_AUCTION_PAUSE;
 use crate::errors::{AuctionStateErrors, ConfigStateErrors};
 use crate::helpers::*;
 use crate::states::*;
@@ -16,7 +18,10 @@ pub struct AuctionCancelled {
 
 pub fn cancel_auction(ctx: Context<CancelAuction>, _auction_id: u32) -> Result<()> {
     require!(
-        !is_paused(ctx.accounts.auction_config.pause_flags, CANCEL_AUCTION_PAUSE),
+        !is_paused(
+            ctx.accounts.auction_config.pause_flags,
+            CANCEL_AUCTION_PAUSE
+        ),
         AuctionStateErrors::FunctionPaused
     );
 
@@ -32,6 +37,11 @@ pub fn cancel_auction(ctx: Context<CancelAuction>, _auction_id: u32) -> Result<(
 
     auction.status = AuctionState::Cancelled;
 
+    let auction_id_bytes = auction.auction_id.to_le_bytes();
+    let bump_bytes = [auction.auction_bump];
+    let signer_seeds: &[&[u8]] = &[b"auction", &auction_id_bytes, &bump_bytes];
+    let signer: &[&[&[u8]]] = &[signer_seeds];
+
     // transfer NFT back
     transfer_tokens_with_seeds(
         &ctx.accounts.prize_escrow,
@@ -39,13 +49,21 @@ pub fn cancel_auction(ctx: Context<CancelAuction>, _auction_id: u32) -> Result<(
         &auction.to_account_info(),
         &ctx.accounts.prize_token_program,
         &ctx.accounts.prize_mint,
-        &[&[
-            b"auction",
-            &auction.auction_id.to_le_bytes(),
-            &[auction.auction_bump],
-        ]],
+        signer,
         1u64,
     )?;
+
+    let cpi_ctx = CpiContext::new_with_signer(
+        ctx.accounts.prize_token_program.to_account_info(), // token_program
+        CloseAccount {
+            account: ctx.accounts.prize_escrow.to_account_info(),
+            destination: creator.to_account_info(),
+            authority: auction.to_account_info(),
+        },
+        signer,
+    );
+
+    close_account(cpi_ctx)?;
 
     emit!(AuctionCancelled {
         auction_id: auction.auction_id,

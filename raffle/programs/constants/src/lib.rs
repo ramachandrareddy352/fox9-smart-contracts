@@ -119,12 +119,8 @@ pub mod raffle {
         buy_ticket::buy_ticket(ctx, raffle_id, tickets_to_buy)
     }
 
-    pub fn buyer_claim_prize(
-        ctx: Context<BuyerClaimPrize>,
-        raffle_id: u32,
-        winner_index: u8,
-    ) -> Result<()> {
-        buyer_claim_prize::buyer_claim_prize(ctx, raffle_id, winner_index)
+    pub fn buyer_claim_prize(ctx: Context<BuyerClaimPrize>, raffle_id: u32) -> Result<()> {
+        buyer_claim_prize::buyer_claim_prize(ctx, raffle_id)
     }
 
     pub fn cancel_raffle(ctx: Context<CancelRaffle>, raffle_id: u32) -> Result<()> {

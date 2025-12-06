@@ -1,10 +1,10 @@
+use anchor_lang::prelude::*;
+use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 use crate::constants::*;
 use crate::errors::{ConfigStateErrors, KeysMismatchErrors, RaffleStateErrors};
 use crate::helpers::*;
 use crate::states::*;
 use crate::utils::{is_paused, validate_win_shares};
-use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 #[event]
 pub struct RaffleCreated {
@@ -128,11 +128,20 @@ pub fn create_raffle(
     };
     raffle.raffle_bump = ctx.bumps.raffle;
 
+    // Pay creation fee separately
+    if config.creation_fee_lamports > 0 {
+        transfer_sol(
+            creator,
+            &config.to_account_info(),
+            &ctx.accounts.system_program,
+            config.creation_fee_lamports,
+        )?;
+    }
+
     // --- Prize Handling ---
     match prize_type {
         PrizeType::Sol => {
             raffle.prize_mint = None;
-            raffle.prize_escrow = None;
 
             transfer_sol(
                 creator,
@@ -146,12 +155,9 @@ pub fn create_raffle(
             let prize_mint = &ctx.accounts.prize_mint;
             let prize_mint_key = prize_mint.key();
 
-            if is_nft {
-                require!(
-                    prize_mint.decimals == 0 && prize_mint.supply == 1,
-                    RaffleStateErrors::InvalidNFT
-                );
-            }
+            let prize_nft = prize_mint.decimals == 0 && prize_mint.supply == 1;
+
+            require!(prize_nft == is_nft, RaffleStateErrors::InvalidNFT);
 
             // Validate creator's prize ATA
             let creator_ata = &ctx.accounts.creator_prize_ata;
@@ -189,22 +195,13 @@ pub fn create_raffle(
             )?;
 
             raffle.prize_mint = Some(prize_mint_key);
-            raffle.prize_escrow = Some(prize_escrow.key());
         }
     }
 
-    // Pay creation fee separately
-    if config.creation_fee_lamports > 0 {
-        transfer_sol(
-            creator,
-            &config.to_account_info(),
-            &ctx.accounts.system_program,
-            config.creation_fee_lamports,
-        )?;
-    }
-
     // --- Ticket Escrow (only if SPL tickets) ---
-    if !is_ticket_sol {
+    if is_ticket_sol {
+        raffle.ticket_mint = None;
+    } else {
         let ticket_mint = &ctx.accounts.ticket_mint;
         let ticket_mint_key = ticket_mint.key();
 
@@ -221,10 +218,6 @@ pub fn create_raffle(
         );
 
         raffle.ticket_mint = Some(ticket_mint_key);
-        raffle.ticket_escrow = Some(ticket_escrow.key());
-    } else {
-        raffle.ticket_mint = None;
-        raffle.ticket_escrow = None;
     }
 
     // --- Increment global raffle counter ---
@@ -286,9 +279,7 @@ pub struct CreateRaffle<'info> {
     #[account(mut)]
     pub creator_prize_ata: InterfaceAccount<'info, TokenAccount>,
 
-    // CHECK: Validated against mint if used
     pub ticket_token_program: Interface<'info, TokenInterface>,
-    // CHECK: Validated against mint if used
     pub prize_token_program: Interface<'info, TokenInterface>,
 
     pub system_program: Program<'info, System>,

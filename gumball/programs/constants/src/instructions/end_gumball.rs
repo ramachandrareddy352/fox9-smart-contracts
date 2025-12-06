@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_spl::token::{close_account, CloseAccount};
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 use crate::constants::*;
 use crate::errors::{ConfigStateErrors, GumballStateErrors, KeysMismatchErrors};
@@ -64,7 +65,7 @@ pub fn end_gumball(ctx: Context<EndGumball>, gumball_id: u32) -> Result<()> {
         config.ticket_fee_bps as u64,
         FEE_MANTISSA as u64,
     )?;
-    let creator_amount = total_amount
+    let mut creator_amount = total_amount
         .checked_sub(fee_amount)
         .ok_or(GumballStateErrors::Overflow)?;
 
@@ -119,6 +120,13 @@ pub fn end_gumball(ctx: Context<EndGumball>, gumball_id: u32) -> Result<()> {
                 KeysMismatchErrors::InvalidTicketAtaOwner
             );
 
+            creator_amount = ctx
+                .accounts
+                .ticket_escrow
+                .amount
+                .checked_sub(fee_amount)
+                .ok_or(GumballStateErrors::Overflow)?;
+
             // Transfer fee to fee escrow PDA ATA
             transfer_tokens_with_seeds(
                 &ctx.accounts.ticket_escrow,
@@ -140,6 +148,18 @@ pub fn end_gumball(ctx: Context<EndGumball>, gumball_id: u32) -> Result<()> {
                 signer_seeds,
                 creator_amount,
             )?;
+
+            // close the ticket account
+            let cpi_ctx = CpiContext::new_with_signer(
+                ctx.accounts.ticket_token_program.to_account_info(), // token_program
+                CloseAccount {
+                    account: ctx.accounts.ticket_escrow.to_account_info(),
+                    destination: ctx.accounts.creator.to_account_info(),
+                    authority: gumball_ai,
+                },
+                signer_seeds,
+            );
+            close_account(cpi_ctx)?;
         }
     }
 

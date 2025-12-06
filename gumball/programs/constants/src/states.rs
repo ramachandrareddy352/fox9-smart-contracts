@@ -8,7 +8,7 @@ pub struct GumballConfig {
     pub creation_fee_lamports: u64, // while creating the gumball the user have to pay fees Native SOL
     pub ticket_fee_bps: u16, // 100 = 1%, for every sale of ticket this % of fees is sent to owner + stakers
     pub minimum_gumball_period: u32, // minimum period the gumball should be active
-    pub maximum_gumball_period: u32, // maximum peroid the gumball can be set
+    pub maximum_gumball_period: u32, // maximum period the gumball can be set
     pub gumball_count: u32,  // use the latest gumball count for seed, start from `1`
     pub pause_flags: u8,     // pause the function using bit masking
     pub config_bump: u8,
@@ -31,18 +31,18 @@ pub struct GumballMachine {
 }
 
 #[account] // seeds = "gumball" + `gumball_id` + `prize_index`
-#[derive(InitSpace)]
+#[derive(InitSpace, Default, Debug)]
 pub struct Prize {
     pub gumball_id: u32,
-    pub prize_index: u16, // if the index is already created an account then check the mint and prize amount
+    pub prize_index: u16,
     pub if_prize_nft: bool,
     pub mint: Pubkey,
-    pub total_amount: u64, // quantity * prize amount
-    pub prize_amount: u64, // SPL amount per unit (for NFTs = 1)
+    pub total_amount: u64,
+    pub prize_amount: u64,
     pub quantity: u16,
 }
 
-#[derive(InitSpace, AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(InitSpace, AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GumballState {
     None,
     Initialized,

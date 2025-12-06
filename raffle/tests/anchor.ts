@@ -2,13 +2,13 @@ import * as anchor from "@coral-xyz/anchor";
 import BN from "bn.js";
 import assert from "assert";
 import * as web3 from "@solana/web3.js";
-import type { raffle } from "../target/types/raffle";
+import type { Constants } from "../target/types/constants";
 
 describe("Test", () => {
   // Configure the client to use the local cluster
   anchor.setProvider(anchor.AnchorProvider.env());
 
-  const program = anchor.workspace.raffle as anchor.Program<raffle>;
+  const program = anchor.workspace.Constants as anchor.Program<Constants>;
   
   it("initialize", async () => {
     // Generate keypair for the new account

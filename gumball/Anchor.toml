@@ -3,7 +3,7 @@ seeds = false
 skip-lint = false
 
 [programs.localnet]
-gumball = "6WjtxBErVmFVqndkV3J79rQ7qgBtwxcdSbBjMKHfUrGE"
+constants = "6WjtxBErVmFVqndkV3J79rQ7qgBtwxcdSbBjMKHfUrGE"
 
 [registry]
 url = "https://api.apr.dev"

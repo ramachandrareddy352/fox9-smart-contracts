@@ -50,6 +50,9 @@ pub enum GumballStateErrors {
     #[msg("Invalid prize index")]
     InvalidPrizeIndex,
 
+    #[msg("Invalid Remaining accounts passed")]
+    InvalidRemainingAccounts,
+
     #[msg("Missing PDA bump for prize")]
     MissingBump,
 

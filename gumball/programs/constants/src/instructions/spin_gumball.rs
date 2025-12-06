@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
+use anchor_spl::token::{close_account, CloseAccount};
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 use crate::constants::*;
 use crate::errors::{ConfigStateErrors, GumballStateErrors, KeysMismatchErrors};
@@ -147,6 +148,19 @@ pub fn spin_gumball(ctx: Context<SpinGumball>, gumball_id: u32, prize_index: u16
                 ticket_price,
             )?;
         }
+    }
+
+    if prize_acc.quantity == 0 {
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.prize_token_program.to_account_info(), // token_program
+            CloseAccount {
+                account: ctx.accounts.prize_escrow.to_account_info(),
+                destination: ctx.accounts.spinner.to_account_info(),
+                authority: gumball_ai,
+            },
+            signer_seeds,
+        );
+        close_account(cpi_ctx)?;
     }
 
     // Emit event

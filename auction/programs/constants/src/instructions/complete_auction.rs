@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
+use anchor_spl::token::{close_account, CloseAccount};
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 use crate::constants::{COMPLETE_AUCTION_PAUSE, FEE_MANTISSA};
 use crate::errors::{AuctionStateErrors, ConfigStateErrors, KeysMismatchErrors};
@@ -36,6 +37,13 @@ pub fn complete_auction(ctx: Context<CompleteAuction>, auction_id: u32) -> Resul
     );
     require_gt!(now, auction.end_time, AuctionStateErrors::AuctionNotStarted);
 
+    let seeds: &[&[u8]] = &[
+        b"auction",
+        &auction.auction_id.to_le_bytes(),
+        &[auction.auction_bump],
+    ];
+    let signer_seeds: &[&[&[u8]]] = &[seeds];
+
     // If no bids, return NFT to creator
     if !auction.has_any_bid {
         // transfer NFT back
@@ -45,11 +53,7 @@ pub fn complete_auction(ctx: Context<CompleteAuction>, auction_id: u32) -> Resul
             &auction.to_account_info(),
             &ctx.accounts.prize_token_program,
             &ctx.accounts.prize_mint,
-            &[&[
-                b"auction",
-                &auction.auction_id.to_le_bytes(),
-                &[auction.auction_bump],
-            ]],
+            signer_seeds,
             1u64,
         )?;
 
@@ -72,9 +76,16 @@ pub fn complete_auction(ctx: Context<CompleteAuction>, auction_id: u32) -> Resul
     let commission_bps = ctx.accounts.auction_config.commission_bps as u64;
 
     let fee_amount = get_pct_amount(final_price, commission_bps, FEE_MANTISSA as u64)?;
-    let creator_amount = final_price
+    let creator_claimable_amount = final_price
         .checked_sub(fee_amount)
         .ok_or(AuctionStateErrors::Overflow)?;
+    let creator_dust_amount = ctx
+        .accounts
+        .bid_escrow
+        .amount
+        .checked_sub(fee_amount)
+        .ok_or(AuctionStateErrors::Overflow)?;
+    let creator_amount = creator_claimable_amount.max(creator_dust_amount);
 
     let prize_mint_key = auction.prize_mint;
 
@@ -91,13 +102,6 @@ pub fn complete_auction(ctx: Context<CompleteAuction>, auction_id: u32) -> Resul
         KeysMismatchErrors::InvalidPrizeAtaOwner
     );
 
-    let seeds: &[&[u8]] = &[
-        b"auction",
-        &auction.auction_id.to_le_bytes(),
-        &[auction.auction_bump],
-    ];
-    let signer_seeds: &[&[&[u8]]] = &[seeds];
-
     transfer_tokens_with_seeds(
         &ctx.accounts.prize_escrow,
         &ctx.accounts.winner_prize_ata,
@@ -108,6 +112,8 @@ pub fn complete_auction(ctx: Context<CompleteAuction>, auction_id: u32) -> Resul
         1u64,
     )?;
 
+    auction.status = AuctionState::CompletedSuccessfully;
+
     // Distribute funds: depends on SOL or SPL bidding
     match auction.bid_mint {
         None => {
@@ -117,7 +123,7 @@ pub fn complete_auction(ctx: Context<CompleteAuction>, auction_id: u32) -> Resul
                 &auction.to_account_info(),
                 &ctx.accounts.auction_config.to_account_info(),
                 &ctx.accounts.system_program,
-                &[seeds],
+                signer_seeds,
                 fee_amount,
             )?;
             // Transfer creator amount to creator
@@ -125,7 +131,7 @@ pub fn complete_auction(ctx: Context<CompleteAuction>, auction_id: u32) -> Resul
                 &auction.to_account_info(),
                 &ctx.accounts.creator,
                 &ctx.accounts.system_program,
-                &[seeds],
+                signer_seeds,
                 creator_amount,
             )?;
         }
@@ -159,7 +165,7 @@ pub fn complete_auction(ctx: Context<CompleteAuction>, auction_id: u32) -> Resul
                 &auction.to_account_info(),
                 &ctx.accounts.bid_token_program,
                 &ctx.accounts.bid_mint,
-                &[seeds],
+                signer_seeds,
                 fee_amount,
             )?;
 
@@ -170,13 +176,33 @@ pub fn complete_auction(ctx: Context<CompleteAuction>, auction_id: u32) -> Resul
                 &auction.to_account_info(),
                 &ctx.accounts.bid_token_program,
                 &ctx.accounts.bid_mint,
-                &[seeds],
+                signer_seeds,
                 creator_amount,
             )?;
+
+            let cpi_ctx = CpiContext::new_with_signer(
+                ctx.accounts.bid_token_program.to_account_info(), // token_program
+                CloseAccount {
+                    account: ctx.accounts.bid_escrow.to_account_info(),
+                    destination: ctx.accounts.creator.to_account_info(),
+                    authority: auction.to_account_info(),
+                },
+                signer_seeds,
+            );
+            close_account(cpi_ctx)?;
         }
     }
 
-    auction.status = AuctionState::CompletedSuccessfully;
+    let cpi_ctx = CpiContext::new_with_signer(
+        ctx.accounts.prize_token_program.to_account_info(), // token_program
+        CloseAccount {
+            account: ctx.accounts.prize_escrow.to_account_info(),
+            destination: ctx.accounts.creator.to_account_info(),
+            authority: auction.to_account_info(),
+        },
+        signer_seeds,
+    );
+    close_account(cpi_ctx)?;
 
     emit!(AuctionCompleted {
         auction_id: auction_id,

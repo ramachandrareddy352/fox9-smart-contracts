@@ -1,5 +1,7 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
+use anchor_spl::token_interface::{
+    close_account, CloseAccount, Mint, TokenAccount, TokenInterface,
+};
 use crate::constants::CANCEL_RAFFLE_PAUSE;
 use crate::errors::{ConfigStateErrors, KeysMismatchErrors, RaffleStateErrors};
 use crate::helpers::*;
@@ -61,23 +63,16 @@ pub fn cancel_raffle(ctx: Context<CancelRaffle>, _raffle_id: u32) -> Result<()> 
             let stored_prize_mint = raffle
                 .prize_mint
                 .ok_or(KeysMismatchErrors::MissingPrizeMint)?;
-            let stored_prize_escrow = raffle
-                .prize_escrow
-                .ok_or(KeysMismatchErrors::MissingPrizeEscrow)?;
 
-            // --- Validate prize mint ---
-            require_keys_eq!(
-                ctx.accounts.prize_mint.key(),
-                stored_prize_mint,
-                KeysMismatchErrors::InvalidPrizeMint
-            );
-
-            // --- Validate prize escrow (owned by raffle PDA) ---
+            let prize_mint = &ctx.accounts.prize_mint;
             let prize_escrow = &ctx.accounts.prize_escrow;
-            require_keys_eq!(
-                prize_escrow.key(),
-                stored_prize_escrow,
-                KeysMismatchErrors::InvalidPrizeEscrow
+            let creator_prize_ata = &ctx.accounts.creator_prize_ata;
+
+            require!(
+                prize_mint.key() == stored_prize_mint
+                    && creator_prize_ata.mint == stored_prize_mint
+                    && prize_escrow.mint == stored_prize_mint,
+                KeysMismatchErrors::InvalidPrizeMint
             );
             require_keys_eq!(
                 prize_escrow.owner,
@@ -85,37 +80,43 @@ pub fn cancel_raffle(ctx: Context<CancelRaffle>, _raffle_id: u32) -> Result<()> 
                 KeysMismatchErrors::InvalidPrizeEscrowOwner
             );
             require_keys_eq!(
-                prize_escrow.mint,
-                stored_prize_mint,
-                KeysMismatchErrors::InvalidPrizeMint
-            );
-
-            // --- Final validation of creator ATA ---
-            let creator_ata = &ctx.accounts.creator_prize_ata;
-            require_keys_eq!(
-                creator_ata.mint,
-                stored_prize_mint,
-                KeysMismatchErrors::InvalidPrizeMint
+                creator_prize_ata.owner,
+                creator.key(),
+                KeysMismatchErrors::InvalidPrizeAtaOwner
             );
 
             // --- Determine amount to return ---
             let return_amount = if raffle.prize_type == PrizeType::Nft {
                 1u64
             } else {
-                raffle.prize_amount
+                // all dust amount also sent to creator
+                raffle.prize_amount.max(prize_escrow.amount)
             };
             require_gt!(return_amount, 0, RaffleStateErrors::InvalidZeroAmount);
 
             // --- SAFE TOKEN TRANSFER (with mint + decimals) ---
             transfer_tokens_with_seeds(
                 prize_escrow,
-                creator_ata,
+                creator_prize_ata,
                 &raffle.to_account_info(),
                 &ctx.accounts.prize_token_program,
-                &ctx.accounts.prize_mint,
+                prize_mint,
                 signer_seeds,
                 return_amount,
             )?;
+
+            // --- CLOSE ESCROW ATA & RETURN RENT to creator ---
+            let cpi_ctx = CpiContext::new_with_signer(
+                ctx.accounts.prize_token_program.to_account_info(),
+                CloseAccount {
+                    account: prize_escrow.to_account_info(),
+                    destination: creator.to_account_info(),
+                    authority: raffle.to_account_info(),
+                },
+                signer_seeds,
+            );
+
+            close_account(cpi_ctx)?;
         }
     }
 

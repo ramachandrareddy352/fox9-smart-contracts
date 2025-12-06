@@ -15,7 +15,7 @@ pub struct TicketPurchased {
     pub bought_time: i64,
 }
 
-pub fn buy_ticket(ctx: Context<BuyTicket>, _raffle_id: u32, tickets_to_buy: u16) -> Result<()> {
+pub fn buy_ticket(ctx: Context<BuyTicket>, raffle_id: u32, tickets_to_buy: u16) -> Result<()> {
     require!(
         !is_paused(ctx.accounts.raffle_config.pause_flags, BUY_TICKET_PAUSE),
         RaffleStateErrors::FunctionPaused
@@ -26,6 +26,11 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, _raffle_id: u32, tickets_to_buy: u16)
     let buyer = &ctx.accounts.buyer;
 
     let now = Clock::get()?.unix_timestamp;
+
+    require!(
+        raffle.status == RaffleState::Active,
+        RaffleStateErrors::RaffleNotActive
+    );
 
     // Must be within start_time .. end_time
     require_gte!(
@@ -74,7 +79,7 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, _raffle_id: u32, tickets_to_buy: u16)
         );
         require_eq!(
             buyer_account.raffle_id,
-            raffle.raffle_id,
+            raffle_id,
             RaffleStateErrors::InvalidRaffleId
         );
     }
@@ -87,12 +92,9 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, _raffle_id: u32, tickets_to_buy: u16)
     buyer_account.tickets = new_buyer_tickets;
 
     // total ticket price have to pay = num of tickets * ticket_prize
-    let intermediate = (raffle.ticket_price as u128)
+    let price_to_pay = (raffle.ticket_price as u128)
         .checked_mul(tickets_to_buy as u128)
-        .ok_or(RaffleStateErrors::Overflow)?;
-    let price_to_pay: u64 = intermediate
-        .try_into()
-        .map_err(|_| RaffleStateErrors::Overflow)?;
+        .ok_or(RaffleStateErrors::Overflow)? as u64;
 
     // SOL ticket (ticket_mint == None) => pay to raffle PDA lamports
     if raffle.ticket_mint.is_none() {
@@ -107,25 +109,16 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, _raffle_id: u32, tickets_to_buy: u16)
         let stored_ticket_mint = raffle
             .ticket_mint
             .ok_or(KeysMismatchErrors::MissingTicketMint)?;
-        // Ensure we are using the correct escrow ATA
-        let stored_ticket_escrow = raffle
-            .ticket_escrow
-            .ok_or(KeysMismatchErrors::MissingTicketEscrow)?;
 
         // Deserialize accounts for validation and CPI
         let ticket_mint = &ctx.accounts.ticket_mint;
         let ticket_escrow = &ctx.accounts.ticket_escrow;
         let buyer_ticket_ata = &ctx.accounts.buyer_ticket_ata;
-        let ticket_token_program = &ctx.accounts.ticket_token_program;
 
-        require_keys_eq!(
-            ticket_escrow.key(),
-            stored_ticket_escrow,
-            KeysMismatchErrors::InvalidTicketEscrow
-        );
-        require_keys_eq!(
-            ticket_mint.key(),
-            stored_ticket_mint,
+        require!(
+            ticket_mint.key() == stored_ticket_mint
+                && buyer_ticket_ata.mint == stored_ticket_mint
+                && ticket_escrow.mint == stored_ticket_mint,
             KeysMismatchErrors::InvalidTicketMint
         );
 
@@ -134,11 +127,6 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, _raffle_id: u32, tickets_to_buy: u16)
             buyer_ticket_ata.owner,
             buyer.key(),
             KeysMismatchErrors::InvalidTicketAtaOwner
-        );
-        require_keys_eq!(
-            buyer_ticket_ata.mint,
-            stored_ticket_mint,
-            KeysMismatchErrors::InvalidTicketMint
         );
         require_keys_eq!(
             ticket_escrow.owner,
@@ -151,7 +139,7 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, _raffle_id: u32, tickets_to_buy: u16)
             buyer_ticket_ata,
             ticket_escrow,
             buyer,
-            ticket_token_program,
+            &ctx.accounts.ticket_token_program,
             ticket_mint,
             price_to_pay,
         )?;

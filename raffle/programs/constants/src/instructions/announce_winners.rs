@@ -59,19 +59,22 @@ pub fn announce_winners(
 
     // ---------- If zero tickets sold (FAILED) ----------
     if tickets_sold == 0 {
+        raffle.status = RaffleState::FailedEnded;
+        raffle.claimable_prize_back = prize_amount;
+
         emit!(RaffleFailed {
             raffle_id,
             claimable_prize_back: prize_amount,
             announce_time: now,
         });
-        raffle.status = RaffleState::FailedEnded;
-        raffle.claimable_prize_back = prize_amount;
+
         return Ok(());
     }
 
     // ---------------- NFT Only ----------------
     if raffle.prize_type == PrizeType::Nft {
         require!(winners.len() == 1, RaffleStateErrors::InvalidWinnersLength);
+
         raffle.winners = winners;
         raffle.status = RaffleState::SuccessEnded;
 
@@ -83,6 +86,7 @@ pub fn announce_winners(
             claimable_prize_back: 0,
             announce_time: now,
         });
+
         return Ok(());
     }
 
@@ -162,7 +166,6 @@ fn process_ticket_revenue(ctx: &mut Context<AnnounceWinners>, tickets_sold: u16)
 
     // Fix temporary borrow: store the bytes in a variable with longer lifetime
     let raffle_id_bytes = raffle.raffle_id.to_le_bytes();
-
     let signer_seeds: &[&[u8]] = &[b"raffle", &raffle_id_bytes, &[raffle.raffle_bump]];
     let seeds: &[&[&[u8]]] = &[signer_seeds];
 
@@ -187,35 +190,23 @@ fn process_ticket_revenue(ctx: &mut Context<AnnounceWinners>, tickets_sold: u16)
             let treasury = &ctx.accounts.ticket_fee_treasury;
             let mint = &ctx.accounts.ticket_mint;
 
-            require_keys_eq!(
-                escrow.mint,
-                stored_mint,
-                KeysMismatchErrors::InvalidTicketMint
-            );
-            require_keys_eq!(
-                mint.key(),
-                stored_mint,
+            require!(
+                escrow.mint == stored_mint
+                    && mint.key() == stored_mint
+                    && treasury.mint == stored_mint,
                 KeysMismatchErrors::InvalidTicketMint
             );
 
-            let stored_escrow = raffle
-                .ticket_escrow
-                .ok_or(KeysMismatchErrors::MissingTicketEscrow)?;
             require_keys_eq!(
-                escrow.key(),
-                stored_escrow,
-                KeysMismatchErrors::InvalidTicketEscrow
+                raffle.key(),
+                escrow.owner,
+                KeysMismatchErrors::InvalidTicketEscrowOwner
             );
 
             require_keys_eq!(
-                treasury.owner,
                 raffle_config.key(),
+                treasury.owner,
                 KeysMismatchErrors::InvalidFeeTreasuryAtaOwner
-            );
-            require_keys_eq!(
-                treasury.mint,
-                stored_mint,
-                KeysMismatchErrors::InvalidTicketMint
             );
 
             transfer_tokens_with_seeds(

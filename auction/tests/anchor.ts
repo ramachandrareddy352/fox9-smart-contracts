@@ -2,13 +2,13 @@ import * as anchor from "@coral-xyz/anchor";
 import BN from "bn.js";
 import assert from "assert";
 import * as web3 from "@solana/web3.js";
-import type { auction } from "../target/types/auction";
+import type { Constants } from "../target/types/constants";
 
 describe("Test", () => {
   // Configure the client to use the local cluster
   anchor.setProvider(anchor.AnchorProvider.env());
 
-  const program = anchor.workspace.auction as anchor.Program<auction>;
+  const program = anchor.workspace.Constants as anchor.Program<Constants>;
   
   it("initialize", async () => {
     // Generate keypair for the new account
