@@ -1,0 +1,117 @@
+use anchor_lang::prelude::*;
+use crate::errors::ConfigStateErrors;
+use crate::states::RaffleConfig;
+
+pub fn initialize_raffle_config(
+    ctx: Context<InitializeRaffleConfig>,
+    raffle_owner: Pubkey,
+    raffle_admin: Pubkey,
+    creation_fee_lamports: u64,
+    ticket_fee_bps: u16,
+    minimum_raffle_period: u32,
+    maximum_raffle_period: u32,
+) -> Result<()> {
+    require!(
+        minimum_raffle_period > 0 && maximum_raffle_period > minimum_raffle_period,
+        ConfigStateErrors::InvalidRafflePeriod
+    );
+ 
+    let raffle_config = &mut ctx.accounts.raffle_config;
+
+    raffle_config.raffle_owner = raffle_owner;
+    raffle_config.raffle_admin = raffle_admin;
+    raffle_config.creation_fee_lamports = creation_fee_lamports;
+    raffle_config.ticket_fee_bps = ticket_fee_bps;
+    raffle_config.minimum_raffle_period = minimum_raffle_period;
+    raffle_config.maximum_raffle_period = maximum_raffle_period;
+    raffle_config.raffle_count = 1;
+    raffle_config.config_bump = ctx.bumps.raffle_config;
+
+    Ok(())
+}
+
+pub fn update_raffle_config_owner(
+    ctx: Context<UpdateRaffleConfig>,
+    new_raffle_owner: Pubkey,
+) -> Result<()> {
+    let raffle_config = &mut ctx.accounts.raffle_config;
+
+    raffle_config.raffle_owner = new_raffle_owner;
+
+    Ok(())
+}
+
+pub fn update_raffle_config_admin(
+    ctx: Context<UpdateRaffleConfig>,
+    new_raffle_admin: Pubkey,
+) -> Result<()> {
+    let raffle_config = &mut ctx.accounts.raffle_config;
+
+    raffle_config.raffle_admin = new_raffle_admin;
+
+    Ok(())
+}
+
+pub fn update_pause_and_unpause(
+    ctx: Context<UpdateRaffleConfig>,
+    new_pause_flags: u8,
+) -> Result<()> {
+    let raffle_config = &mut ctx.accounts.raffle_config;
+
+    raffle_config.pause_flags = new_pause_flags;
+
+    Ok(())
+}
+
+pub fn update_raffle_config_data(
+    ctx: Context<UpdateRaffleConfig>,
+    creation_fee_lamports: u64,
+    ticket_fee_bps: u16,
+    minimum_raffle_period: u32,
+    maximum_raffle_period: u32,
+) -> Result<()> {
+    require!(
+        minimum_raffle_period > 0 && maximum_raffle_period > minimum_raffle_period,
+        ConfigStateErrors::InvalidRafflePeriod
+    );
+
+    let raffle_config = &mut ctx.accounts.raffle_config;
+
+    raffle_config.creation_fee_lamports = creation_fee_lamports;
+    raffle_config.ticket_fee_bps = ticket_fee_bps;
+    raffle_config.minimum_raffle_period = minimum_raffle_period;
+    raffle_config.maximum_raffle_period = maximum_raffle_period;
+
+    Ok(())
+}
+
+#[derive(Accounts)]
+pub struct InitializeRaffleConfig<'info> {
+    #[account(
+        init,
+        payer = payer,
+        space = 8 + RaffleConfig::INIT_SPACE,
+        seeds = [b"raffle"],
+        bump
+    )]
+    pub raffle_config: Box<Account<'info, RaffleConfig>>,
+
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateRaffleConfig<'info> {
+    #[account(
+        mut,
+        seeds = [b"raffle"],
+        bump = raffle_config.config_bump,
+        constraint =  raffle_owner.key() == raffle_config.raffle_owner @ConfigStateErrors::InvalidRaffleOwner
+    )]
+    pub raffle_config: Box<Account<'info, RaffleConfig>>,
+
+    #[account(mut)]
+    pub raffle_owner: Signer<'info>,
+}
