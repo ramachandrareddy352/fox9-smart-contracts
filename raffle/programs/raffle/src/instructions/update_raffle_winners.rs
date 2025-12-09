@@ -10,7 +10,7 @@ pub struct RaffleWinnersUpdated {
     pub win_shares: Vec<u8>,
     pub is_unique_winners: bool,
 }
-
+ 
 pub fn update_raffle_winners(
     ctx: Context<UpdateRaffleWinners>,
     raffle_id: u32,

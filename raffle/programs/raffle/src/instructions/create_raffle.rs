@@ -247,7 +247,7 @@ pub struct CreateRaffle<'info> {
     )]
     pub raffle_config: Box<Account<'info, RaffleConfig>>,
 
-    #[account(
+    #[account( 
         init,
         payer = creator,
         space = 8 + Raffle::INIT_SPACE,

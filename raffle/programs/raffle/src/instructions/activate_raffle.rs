@@ -9,7 +9,7 @@ pub struct RaffleActivated {
     raffle_id: u32,
     activated_at: i64,
 }
-
+ 
 pub fn activate_raffle(ctx: Context<ActivateRaffle>, _raffle_id: u32) -> Result<()> {
     let raffle = &mut ctx.accounts.raffle;
 

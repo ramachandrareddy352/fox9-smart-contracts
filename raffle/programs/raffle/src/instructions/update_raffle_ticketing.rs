@@ -10,7 +10,7 @@ pub struct RaffleTicketingUpdated {
     pub new_ticket_price: u64,
     pub new_max_per_wallet_pct: u8,
 }
-
+ 
 pub fn update_raffle_ticketing(
     ctx: Context<UpdateRaffleTicketing>,
     raffle_id: u32,

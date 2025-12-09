@@ -290,3 +290,128 @@ export async function createRaffle(
         .rpc();
 }
 
+// Helper to update raffle ticketing
+export async function updateRaffleTicketing(
+    program: anchor.Program,
+    raffleConfig: PublicKey,
+    rafflePda: PublicKey,
+    raffleId: number,
+    newTotalTickets: number,
+    newTicketPrice: number,
+    newMaxPct: number,
+    creator: Keypair,
+    admin: Keypair,
+) {
+    await program.methods
+        .updateRaffleTicketing(
+            raffleId,
+            newTotalTickets,
+            new anchor.BN(newTicketPrice),
+            newMaxPct
+        )
+        .accounts({
+            raffleConfig: raffleConfig,
+            raffle: rafflePda,
+            creator: creator.publicKey,
+            raffleAdmin: admin.publicKey,
+        })
+        .signers([creator, admin])
+        .rpc();
+}
+
+// Helper to update raffle time
+export async function updateRaffleTime(
+    program: anchor.Program,
+    raffleConfig: PublicKey,
+    rafflePda: PublicKey,
+    raffleId: number,
+    newStartTime: number,
+    newEndTime: number,
+    creator: Keypair,
+    admin: Keypair
+) {
+    await program.methods
+        .updateRaffleTime(
+            raffleId,
+            new anchor.BN(newStartTime),
+            new anchor.BN(newEndTime)
+        )
+        .accounts({
+            raffleConfig: raffleConfig,
+            raffle: rafflePda,
+            creator: creator.publicKey,
+            raffleAdmin: admin.publicKey,
+        })
+        .signers([creator, admin])
+        .rpc();
+}
+
+// Helper to update raffle winners
+export async function updateRaffleWinners(
+    program: anchor.Program,
+    raffleConfig: PublicKey,
+    rafflePda: PublicKey,
+    raffleId: number,
+    newWinShares: number[],
+    newUnique: boolean,
+    creator: Keypair,
+    admin: Keypair
+) {
+    await program.methods
+        .updateRaffleWinners(
+            raffleId,
+            Buffer.from(newWinShares),
+            newUnique
+        )
+        .accounts({
+            raffleConfig: raffleConfig,
+            raffle: rafflePda,
+            creator: creator.publicKey,
+            raffleAdmin: admin.publicKey,
+        })
+        .signers([creator, admin])
+        .rpc();
+}
+
+/**
+ * Buy tickets in a raffle (supports both SOL and SPL tickets)
+ */
+export async function buyTickets(
+    program: anchor.Program,
+    raffleConfig: PublicKey,
+    rafflePda: PublicKey,
+    raffleId: number,
+    buyer: Keypair,
+    ticketsToBuy: number,
+    ticketMint: PublicKey,
+    ticketEscrow: PublicKey,
+    buyerTicketAta: PublicKey,
+    raffleAdmin: Keypair,
+) {
+    const accounts = {
+        raffleConfig,
+        raffle: rafflePda,
+        buyerAccount: anchor.web3.PublicKey.findProgramAddressSync(
+            [
+                Buffer.from("raffle"),
+                new anchor.BN(raffleId).toArrayLike(Buffer, "le", 4),
+                buyer.publicKey.toBuffer(),
+            ],
+            program.programId
+        )[0],
+        buyer: buyer.publicKey,
+        raffleAdmin: raffleAdmin.publicKey,
+        ticketMint,
+        buyerTicketAta,
+        ticketEscrow,
+        ticketTokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: anchor.web3.SystemProgram.programId,
+    };
+
+    await program.methods
+        .buyTicket(raffleId, ticketsToBuy)
+        .accounts(accounts)
+        .signers([buyer, raffleAdmin]) // raffle_admin must sign
+        .rpc();
+
+}
