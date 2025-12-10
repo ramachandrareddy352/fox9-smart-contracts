@@ -3,7 +3,7 @@ use anchor_spl::token_interface::{
     close_account, CloseAccount, Mint, TokenAccount, TokenInterface,
 };
 use crate::constants::CANCEL_RAFFLE_PAUSE;
-use crate::errors::{ConfigStateErrors, KeysMismatchErrors, RaffleStateErrors};
+use crate::errors::*;
 use crate::helpers::*;
 use crate::states::*;
 use crate::utils::is_paused;
@@ -39,7 +39,7 @@ pub fn cancel_raffle(ctx: Context<CancelRaffle>, _raffle_id: u32) -> Result<()> 
 
     // Refund prize to creator (but NOT creation fee)
     let prize_amount = raffle.prize_amount;
-
+ 
     // Seeds for raffle PDA signing (same as in create_raffle)
     let raffle_id_bytes = raffle.raffle_id.to_le_bytes(); // binding
     let seeds: &[&[u8]] = &[b"raffle", &raffle_id_bytes, &[raffle.raffle_bump]];
@@ -51,13 +51,13 @@ pub fn cancel_raffle(ctx: Context<CancelRaffle>, _raffle_id: u32) -> Result<()> 
         PrizeType::Sol => {
             // Prize is in SOL stored on the raffle PDA.
             // Transfer only `prize_amount` back to creator.
-            transfer_sol_with_seeds(
-                &raffle.to_account_info(),
-                &creator.to_account_info(),
-                &ctx.accounts.system_program,
-                signer_seeds,
-                prize_amount,
-            )?;
+            let from = raffle.to_account_info();
+            let to = creator.to_account_info();
+
+            require!(from.lamports() > prize_amount, TransferErrors::InsufficientSolBalance);
+
+            **from.try_borrow_mut_lamports()? -= prize_amount;
+            **to.try_borrow_mut_lamports()? += prize_amount;
         }
         PrizeType::Nft | PrizeType::Spl => {
             let stored_prize_mint = raffle

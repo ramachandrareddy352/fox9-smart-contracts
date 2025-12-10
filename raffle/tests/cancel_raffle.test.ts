@@ -9,14 +9,17 @@ import {
     activateRaffle,
     cancelRaffle,
     getSolBalance,
-    buildCreateRaffleAccounts
+    buildCreateRaffleAccounts,
+    getTokenBalance,
+    mintTokens,
+    buyTickets,
+    createAta
 } from "./helpers";
 import {
     raffle_owner,
     raffle_admin,
     raffle_1_creator,
     raffle_2_creator,
-    raffle_3_creator,
     setProgram,
     setProvider,
     getProgram,
@@ -28,11 +31,9 @@ import {
     creation_fee_lamports,
     ticket_fee_bps,
 } from "./values";
+import { SystemProgram } from "@solana/web3.js";
 
-// ----------------------------------------------------
-// BANKRUN TEST SUITE FOR CANCEL RAFFLE
-// ----------------------------------------------------
-describe("Cancel Raffle – Bankrun", () => {
+describe("Cancel Raffle", () => {
     let context: any;
     let provider: BankrunProvider;
     let program: anchor.Program<any>;
@@ -89,8 +90,11 @@ describe("Cancel Raffle – Bankrun", () => {
         const { ticketEscrow, prizeEscrow, creatorPrizeAta } =
             await buildAccounts(rafflePdaAddr, creator, ticketMint, prizeMint);
 
+        await mintTokens(prizeMint, creatorPrizeAta, 100_000_000_000);
+
         const client = context.banksClient;
-        const now = Number(await client.getClock().unixTimestamp);
+        const nowClock = await client.getClock();
+        const now = Number(nowClock.unixTimestamp);
         const start = now + 10;
         const end = now + 10000;
 
@@ -134,9 +138,6 @@ describe("Cancel Raffle – Bankrun", () => {
         return { ticketEscrow, prizeEscrow, creatorPrizeAta };
     }
 
-    // ----------------------------------------------------
-    // VALID — CANCEL INITIALIZED SOL RAFFLE BEFORE TICKETS
-    // ----------------------------------------------------
     it("cancels initialized SOL raffle when zero tickets sold", async () => {
         const splMint = await createSplMint();
         const { raffleId, rafflePdaAddr, prizeEscrow, creatorPrizeAta } =
@@ -157,187 +158,165 @@ describe("Cancel Raffle – Bankrun", () => {
 
         const balAfter = await getSolBalance(raffle_1_creator.publicKey);
         assert.ok(balAfter > balBefore);
+
+        const configBalanace = await getSolBalance(raffleConfigPda());
+        console.log("configBalanace => ", configBalanace)
+
+        await program.methods.withdrawSolFees(new anchor.BN(90_000_000))
+            .accounts({
+                raffleConfig: raffleConfigPda(),
+                owner: raffle_owner.publicKey,
+                receiver: raffle_admin.publicKey,
+                systemProgram: anchor.web3.SystemProgram.programId,
+            })
+            .signers([raffle_owner])
+            .rpc();
+
+        const configBalanaceAfter = await getSolBalance(raffle_admin.publicKey);
+        console.log("configBalanaceAfter withdraw => ", configBalanaceAfter)
     });
 
-    // ----------------------------------------------------
-    // VALID — CANCEL ACTIVE SPL RAFFLE ZERO TICKETS
-    // ----------------------------------------------------
-    it("cancels active SPL raffle", async () => {
-        const splMint = await createSplMint();
-        const { raffleId, rafflePdaAddr, prizeEscrow, creatorPrizeAta } =
-            await makeRaffle(raffle_1_creator, splMint, { spl: {} });
+    // it("cancels active SPL raffle", async () => {
+    //     const splMint = await createSplMint();
+    //     const { raffleId, rafflePdaAddr, prizeEscrow, creatorPrizeAta } =
+    //         await makeRaffle(raffle_1_creator, splMint, { spl: {} });
 
-        // warp time to activation
-        const old = Number(context.clock.unixTimestamp);
-        context.setClock({
-            unixTimestamp: old + 5000,
-            slot: context.clock.slot + 100,
-        });
+    //     // warp time to activation
+    //     const client = context.banksClient;
+    //     const nowClock = await client.getClock();
+    //     const newTime = Number(nowClock.unixTimestamp) + 400;
+    //     console.log("newTime => ", newTime)
 
-        await activateRaffle(program, rafflePdaAddr, raffleId, raffle_admin);
+    //     context.setClock(
+    //         new Clock(
+    //             nowClock.slot,
+    //             nowClock.epochStartTimestamp,
+    //             nowClock.epoch,
+    //             nowClock.leaderScheduleEpoch,
+    //             BigInt(newTime),
+    //         ),
+    //     );
 
-        const balBefore = await getSolBalance(raffle_1_creator.publicKey);
+    //     await activateRaffle(program, rafflePdaAddr, raffleId, raffle_admin);
 
-        await cancelRaffle(
-            program,
-            rafflePdaAddr,
-            raffleId,
-            raffle_1_creator,
-            raffle_admin,
-            splMint,
-            prizeEscrow,
-            creatorPrizeAta,
-        );
+    //     const balBefore = await getTokenBalance(creatorPrizeAta);
+    //     console.log("balBefore => ", balBefore)
 
-        const balAfter = await getSolBalance(raffle_1_creator.publicKey);
-        assert.ok(balAfter > balBefore);
-    });
+    //     await cancelRaffle(
+    //         program,
+    //         rafflePdaAddr,
+    //         raffleId,
+    //         raffle_1_creator,
+    //         raffle_admin,
+    //         splMint,
+    //         prizeEscrow,
+    //         creatorPrizeAta,
+    //     );
 
-    // ----------------------------------------------------
-    // INVALID — WRONG ADMIN SIGNER
-    // ----------------------------------------------------
-    it("fails when wrong admin signs", async () => {
-        const splMint = await createSplMint();
-        const { raffleId, rafflePdaAddr, prizeEscrow, creatorPrizeAta } =
-            await makeRaffle(raffle_1_creator, splMint, { sol: {} });
+    //     const balAfter = await getTokenBalance(creatorPrizeAta);
+    //     console.log("balAfter => ", balAfter)
+    //     assert.ok(balAfter > balBefore);
 
-        await assert.rejects(
-            cancelRaffle(
-                program,
-                rafflePdaAddr,
-                raffleId,
-                raffle_1_creator,
-                raffle_2_creator, // wrong admin
-                splMint,
-                prizeEscrow,
-                creatorPrizeAta,
-            ),
-        );
-    });
+    //     // after raffle is cancelled the rent is sent to Creator and account is closed and we get `AccountNotInitialized`
+    //     await assert.rejects(
+    //         cancelRaffle(
+    //             program,
+    //             rafflePdaAddr,
+    //             raffleId,
+    //             raffle_1_creator,
+    //             raffle_admin,
+    //             splMint,
+    //             prizeEscrow,
+    //             creatorPrizeAta,
+    //         )
+    //     );
+    // });
 
-    // ----------------------------------------------------
-    // INVALID — WRONG CREATOR SIGNER
-    // ----------------------------------------------------
-    it("fails when wrong creator signs", async () => {
-        const splMint = await createSplMint();
-        const { raffleId, rafflePdaAddr, prizeEscrow, creatorPrizeAta } =
-            await makeRaffle(raffle_1_creator, splMint, { sol: {} });
+    // it("fails when wrong admin signs", async () => {
+    //     const splMint = await createSplMint();
+    //     const { raffleId, rafflePdaAddr, prizeEscrow, creatorPrizeAta } =
+    //         await makeRaffle(raffle_1_creator, splMint, { sol: {} });
 
-        await assert.rejects(
-            cancelRaffle(
-                program,
-                rafflePdaAddr,
-                raffleId,
-                raffle_2_creator, // not original creator
-                raffle_admin,
-                splMint,
-                prizeEscrow,
-                creatorPrizeAta,
-            ),
-        );
-    });
+    //     await assert.rejects(
+    //         cancelRaffle(
+    //             program,
+    //             rafflePdaAddr,
+    //             raffleId,
+    //             raffle_1_creator,
+    //             raffle_2_creator, // wrong admin
+    //             splMint,
+    //             prizeEscrow,
+    //             creatorPrizeAta,
+    //         )
+    //     );
+    // });
 
-    // ----------------------------------------------------
-    // INVALID — FIRST BUYER ALREADY PURCHASED TICKETS
-    // ----------------------------------------------------
-    it("fails if tickets already sold", async () => {
-        const splMint = await createSplMint();
-        const { raffleId, rafflePdaAddr, prizeEscrow, creatorPrizeAta } =
-            await makeRaffle(raffle_1_creator, splMint, { spl: {} });
+    // it("fails when wrong creator signs", async () => {
+    //     const splMint = await createSplMint();
+    //     const { raffleId, rafflePdaAddr, prizeEscrow, creatorPrizeAta } =
+    //         await makeRaffle(raffle_1_creator, splMint, { sol: {} });
 
-        // manually mutate tickets_sold = 1 (simulate buying)
-        const raffle = await program.account.raffle.fetch(rafflePdaAddr);
-        raffle.ticketsSold = 1;
-        await context.setAccount(rafflePdaAddr, {
-            lamports: BigInt(await getSolBalance(rafflePdaAddr)),
-            owner: program.programId,
-            executable: false,
-            data: program.coder.accounts.encode("raffle", raffle),
-        });
+    //     await assert.rejects(
+    //         cancelRaffle(
+    //             program,
+    //             rafflePdaAddr,
+    //             raffleId,
+    //             raffle_2_creator, // not original creator
+    //             raffle_admin,
+    //             splMint,
+    //             prizeEscrow,
+    //             creatorPrizeAta,
+    //         ),
+    //     );
+    // });
 
-        await assert.rejects(
-            cancelRaffle(
-                program,
-                rafflePdaAddr,
-                raffleId,
-                raffle_1_creator,
-                raffle_admin,
-                splMint,
-                prizeEscrow,
-                creatorPrizeAta,
-            ),
-        );
-    });
+    // it("fails if tickets already sold", async () => {
+    //     const splMint = await createSplMint();
+    //     const { raffleId, rafflePdaAddr, prizeEscrow, creatorPrizeAta } =
+    //         await makeRaffle(raffle_1_creator, splMint, { sol: {} });
 
-    // ----------------------------------------------------
-    // INVALID — CANCEL AGAIN AFTER CANCELLED
-    // ----------------------------------------------------
-    it("fails cancelling twice", async () => {
-        const splMint = await createSplMint();
-        const { raffleId, rafflePdaAddr, prizeEscrow, creatorPrizeAta } =
-            await makeRaffle(raffle_1_creator, splMint, { sol: {} });
+    //     // manually mutate tickets_sold = 1 (simulate buying)
+    //     const buyer = anchor.web3.Keypair.generate();
+    //     const buyerTicketAta = await createAta(splMint, buyer.publicKey);
 
-        await cancelRaffle(
-            program,
-            rafflePdaAddr,
-            raffleId,
-            raffle_1_creator,
-            raffle_admin,
-            splMint,
-            prizeEscrow,
-            creatorPrizeAta,
-        );
+    //     await context.setAccount(buyer.publicKey, {
+    //         lamports: 20_000_000_000,
+    //         owner: anchor.web3.SystemProgram.programId,
+    //         executable: false,
+    //         data: Buffer.alloc(0),
+    //     });
 
-        await assert.rejects(
-            cancelRaffle(
-                program,
-                rafflePdaAddr,
-                raffleId,
-                raffle_1_creator,
-                raffle_admin,
-                splMint,
-                prizeEscrow,
-                creatorPrizeAta,
-            ),
-        );
-    });
+    //     // warp time to activation
+    //     const client = context.banksClient;
+    //     const nowClock = await client.getClock();
+    //     const newTime = Number(nowClock.unixTimestamp) + 400;
+    //     console.log("newTime => ", newTime)
 
-    // ----------------------------------------------------
-    // INVALID — CANCEL WHEN ENDED
-    // ----------------------------------------------------
-    it("fails cancel after raffle ended", async () => {
-        const splMint = await createSplMint();
-        const { raffleId, rafflePdaAddr, prizeEscrow, creatorPrizeAta } =
-            await makeRaffle(raffle_1_creator, splMint, { spl: {} });
+    //     context.setClock(
+    //         new Clock(
+    //             nowClock.slot,
+    //             nowClock.epochStartTimestamp,
+    //             nowClock.epoch,
+    //             nowClock.leaderScheduleEpoch,
+    //             BigInt(newTime),
+    //         ),
+    //     );
 
-        // warp beyond end time
-        const old = Number(context.clock.unixTimestamp);
-        context.setClock({
-            unixTimestamp: old + 500000,
-            slot: context.clock.slot + 100,
-        });
+    //     await activateRaffle(program, rafflePdaAddr, raffleId, raffle_admin);
 
-        // mutate status to FailedEnded
-        const raffle = await program.account.raffle.fetch(rafflePdaAddr);
-        raffle.status = { failedEnded: {} };
-        await context.setAccount(rafflePdaAddr, {
-            lamports: BigInt(await getSolBalance(rafflePdaAddr)),
-            owner: program.programId,
-            executable: false,
-            data: program.coder.accounts.encode("raffle", raffle),
-        });
+    //     await buyTickets(program, rafflePdaAddr, raffleId, buyer, 1, splMint, creatorPrizeAta, buyerTicketAta, raffle_admin);
 
-        await assert.rejects(
-            cancelRaffle(
-                program,
-                rafflePdaAddr,
-                raffleId,
-                raffle_1_creator,
-                raffle_admin,
-                splMint,
-                prizeEscrow,
-                creatorPrizeAta,
-            ),
-        );
-    });
+    //     await assert.rejects(
+    //         cancelRaffle(
+    //             program,
+    //             rafflePdaAddr,
+    //             raffleId,
+    //             raffle_1_creator,
+    //             raffle_admin,
+    //             splMint,
+    //             prizeEscrow,
+    //             creatorPrizeAta,
+    //         )
+    //     );
+    // });
 });

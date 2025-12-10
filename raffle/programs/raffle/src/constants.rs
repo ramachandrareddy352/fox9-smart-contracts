@@ -16,3 +16,4 @@ pub const BUYER_CLAIM_PRIZE_PAUSE: u8 = 4;
 pub const CANCEL_RAFFLE_PAUSE: u8 = 5;
 pub const CLAIM_AMOUNT_BACK_PAUSE: u8 = 6;
 pub const UPDATE_RAFFLE_PAUSE: u8 = 7;
+ 

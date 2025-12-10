@@ -12,7 +12,7 @@ pub struct TicketPurchased {
     pub buyer: Pubkey,
     pub tickets_bought: u16,
     pub price_paid: u64,
-    pub bought_time: i64,
+    pub bought_time: i64, 
 }
 
 pub fn buy_ticket(ctx: Context<BuyTicket>, raffle_id: u32, tickets_to_buy: u16) -> Result<()> {

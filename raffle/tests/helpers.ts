@@ -4,13 +4,15 @@ import { Keypair, PublicKey, SystemProgram, Transaction } from "@solana/web3.js"
 import {
     createInitializeMintInstruction,
     createAssociatedTokenAccountIdempotentInstruction,
-    createMintToCheckedInstruction,
     createTransferCheckedInstruction,
     TOKEN_PROGRAM_ID,
     getAssociatedTokenAddressSync,
+    createMintToInstruction,
+    AccountLayout,
 } from "@solana/spl-token";
 import { PrizeType } from "../target/types/raffle";
-import { getProgram, getProvider, raffleConfigPda } from "./values";
+import { getProvider, raffleConfigPda } from "./values";
+import { Clock } from "solana-bankrun";
 
 // === CORE HELPERS (Bankrun Compatible) ===
 
@@ -44,7 +46,7 @@ export async function createAta(mint: PublicKey, owner: PublicKey): Promise<Publ
 
     const tx = new Transaction().add(
         createAssociatedTokenAccountIdempotentInstruction(
-            provider.wallet.publicKey,
+            provider.wallet.publicKey, // payer
             ata,
             owner,
             mint
@@ -55,10 +57,15 @@ export async function createAta(mint: PublicKey, owner: PublicKey): Promise<Publ
     return ata;
 }
 
-export async function mintTokens(mint: PublicKey, to: PublicKey, amount: number, decimals = 9) {
+export async function mintTokens(mint: PublicKey, to: PublicKey, amount: number) {
     const provider = getProvider();
     const tx = new Transaction().add(
-        createMintToCheckedInstruction(mint, to, provider.wallet.publicKey, amount, decimals)
+        createMintToInstruction(
+            mint,
+            to,
+            provider.wallet.publicKey, // mint authority
+            amount
+        )
     );
     await provider.sendAndConfirm(tx);
 }
@@ -347,77 +354,180 @@ export async function announceWinners(
     program: anchor.Program,
     rafflePda: PublicKey,
     raffleId: number,
-    admin: Keypair
+    admin: Keypair,
+    winners: PublicKey[],
+    ticketMint: PublicKey,
+    ticketEscrow: PublicKey,
+    ticketFeeTreasury: PublicKey
 ) {
     await program.methods
-        .announceWinners(raffleId)
+        .announceWinners(raffleId, winners)
         .accounts({
             raffleConfig: raffleConfigPda(),
             raffle: rafflePda,
             raffleAdmin: admin.publicKey,
+            ticketMint,
+            ticketEscrow,
+            ticketFeeTreasury,
+            ticketTokenProgram: TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
         })
         .signers([admin])
         .rpc();
 }
 
-export async function claimPrize(
+export async function buyerClaimPrize(
     program: anchor.Program,
     rafflePda: PublicKey,
     raffleId: number,
-    winner: Keypair,
-    prizeEscrow: PublicKey,
-    winnerPrizeAta: PublicKey,
-    prizeMint: PublicKey
+    winner: anchor.web3.Keypair,
+    raffleAdmin: anchor.web3.Keypair,
+    prizeMint: PublicKey | null,
+    prizeEscrow: PublicKey | null,
+    winnerPrizeAta: PublicKey | null,
 ) {
-    const buyerAccount = PublicKey.findProgramAddressSync(
+    let accounts: any = {
+        raffleConfig: raffleConfigPda(),
+        raffle: rafflePda,
+        buyerAccount: PublicKey.findProgramAddressSync(
+            [
+                Buffer.from("raffle"),
+                new anchor.BN(raffleId).toArrayLike(Buffer, "le", 4),
+                winner.publicKey.toBuffer(),
+            ],
+            program.programId
+        )[0],
+        raffleAdmin: raffleAdmin.publicKey,
+        winner: winner.publicKey,
+        systemProgram: SystemProgram.programId,
+    };
+
+    /**
+     * If prize type is SPL/NFT, we MUST attach
+     * prize_mint, prize_escrow, winner_prize_ata, token_program
+     */
+    if (prizeMint !== null) {
+        accounts = {
+            ...accounts,
+            prizeMint,
+            prizeEscrow,
+            winnerPrizeAta,
+            prizeTokenProgram: TOKEN_PROGRAM_ID,
+        };
+    }
+
+    return await program.methods
+        .buyerClaimPrize(raffleId)
+        .accounts(accounts)
+        .signers([winner, raffleAdmin])
+        .rpc();
+}
+
+export async function creatorClaimAmountBack(
+    program: anchor.Program,
+    rafflePda: PublicKey,
+    raffleId: number,
+    creator: anchor.web3.Keypair,
+    raffleAdmin: anchor.web3.Keypair,
+    prizeMint: PublicKey | null,
+    ticketMint: PublicKey | null,
+    prizeEscrow: PublicKey | null,
+    ticketEscrow: PublicKey | null,
+    creatorPrizeAta: PublicKey | null,
+    creatorTicketAta: PublicKey | null,
+) {
+    let accounts: any = {
+        raffleConfig: raffleConfigPda(),
+        raffle: rafflePda,
+        creator: creator.publicKey,
+        raffleAdmin: raffleAdmin.publicKey,
+        systemProgram: SystemProgram.programId,
+    };
+
+    /**
+     * SPL prize & ticket details added when non-null
+     */
+    if (prizeMint !== null) {
+        accounts = {
+            ...accounts,
+            prizeMint,
+            prizeEscrow,
+            creatorPrizeAta,
+            prizeTokenProgram: TOKEN_PROGRAM_ID,
+        };
+    }
+
+    if (ticketMint !== null) {
+        accounts = {
+            ...accounts,
+            ticketMint,
+            ticketEscrow,
+            creatorTicketAta,
+            ticketTokenProgram: TOKEN_PROGRAM_ID,
+        };
+    }
+
+    return await program.methods
+        .claimAmountBack(raffleId)
+        .accounts(accounts)
+        .signers([creator, raffleAdmin])
+        .rpc();
+}
+
+export function buyerPda(
+    raffleId: number,
+    user: PublicKey,
+    programId: PublicKey,
+): PublicKey {
+    return PublicKey.findProgramAddressSync(
         [
             Buffer.from("raffle"),
             new anchor.BN(raffleId).toArrayLike(Buffer, "le", 4),
-            winner.publicKey.toBuffer(),
+            user.toBuffer(),
         ],
-        program.programId
+        programId
     )[0];
-
-    await program.methods
-        .buyerClaimPrize(raffleId)
-        .accounts({
-            raffleConfig: raffleConfigPda(),
-            raffle: rafflePda,
-            buyerAccount,
-            winner: winner.publicKey,
-            prizeEscrow,
-            winnerPrizeAta,
-            prizeMint,
-            prizeTokenProgram: TOKEN_PROGRAM_ID,
-        })
-        .signers([winner])
-        .rpc();
 }
 
 // === UTILS ===
 
 export async function getSolBalance(pubkey: PublicKey): Promise<number> {
-    return getProvider().connection.getBalance(pubkey);
+    return getProvider().context.banksClient.getBalance(pubkey)
 }
 
 export async function getTokenBalance(ata: PublicKey): Promise<number> {
-    const info = await getProvider().connection.getTokenAccountBalance(ata);
-    return Number(info.value.amount);
+    const provider = getProvider();
+    const client = provider.context.banksClient;
+
+    const account = await client.getAccount(ata);
+    if (!account) return 0;
+
+    // SPL Token account layout decode
+    const data = AccountLayout.decode(account.data as Buffer);
+    return Number(data.amount);
 }
 
-export function getCurrentTimestamp(): number {
-    return getProvider().context.clock.unixTimestamp.toNumber();
+export async function getCurrentTimestamp(): Promise<number> {
+    const client = getProvider().context.banksClient;
+    const nowClock = await client.getClock();
+    return Number(nowClock.unixTimestamp);
 }
 
-export function warpToTimestamp(seconds: number) {
+
+export async function warpForward(seconds: number) {
     const context = getProvider().context;
-    context.setClock({
-        unixTimestamp: seconds,
-        slot: context.clock.slot + 100,
-    });
-}
+    const client = context.banksClient;
+    const nowClock = await client.getClock();
+    const newTime = Number(nowClock.unixTimestamp) + 400;
+    console.log("newTime => ", newTime)
 
-export function warpForward(seconds: number) {
-    const current = getCurrentTimestamp();
-    warpToTimestamp(current + seconds);
+    context.setClock(
+        new Clock(
+            nowClock.slot,
+            nowClock.epochStartTimestamp,
+            nowClock.epoch,
+            nowClock.leaderScheduleEpoch,
+            BigInt(newTime),
+        ),
+    );
 }

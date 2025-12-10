@@ -35,7 +35,7 @@ pub fn create_raffle(
     require!(
         !is_paused(config.pause_flags, CREATE_RAFFLE_PAUSE),
         RaffleStateErrors::FunctionPaused
-    );
+    ); 
 
     let raffle = &mut ctx.accounts.raffle;
     let creator = &ctx.accounts.creator;

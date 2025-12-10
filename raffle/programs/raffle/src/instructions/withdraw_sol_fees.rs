@@ -11,32 +11,26 @@ pub struct FeesWithdrawn {
 }
 
 pub fn withdraw_sol_fees(ctx: Context<WithdrawSolFees>, amount: u64) -> Result<()> {
-    let config = &ctx.accounts.raffle_config;
-    let pda_ai = config.to_account_info();
+    let raffle_config = &ctx.accounts.raffle_config;
+    let from = raffle_config.to_account_info();
+    let to = ctx.accounts.receiver.to_account_info();
 
-    // Rent-exempt check
+    // Rent-exempt check for the source PDA
     let rent = Rent::get()?;
-    let min_rent = rent.minimum_balance(pda_ai.data_len());
+    let min_rent = rent.minimum_balance(from.data_len());
 
     require!(
-        pda_ai.lamports() >= min_rent + amount,
+        from.lamports() > min_rent + amount,
         TransferErrors::InsufficientSolBalance
     );
 
-    let signer_seeds: &[&[&[u8]]] = &[&[b"raffle", &[config.config_bump]]];
-
-    // Transfer using your helper
-    transfer_sol_with_seeds(
-        &pda_ai,
-        &ctx.accounts.owner,
-        &ctx.accounts.system_program,
-        signer_seeds,
-        amount,
-    )?;
+    // Move lamports directly (no CPI needed; program owns raffle_config)
+    **from.try_borrow_mut_lamports()? -= amount;
+    **to.try_borrow_mut_lamports()? += amount;
 
     emit!(FeesWithdrawn {
         amount,
-        receiver: ctx.accounts.owner.key(),
+        receiver: to.key(),
     });
 
     Ok(())
@@ -56,5 +50,10 @@ pub struct WithdrawSolFees<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
 
+    #[account(mut)]
+    /// CHECK: receiver may be PDA or wallet address
+    pub receiver: UncheckedAccount<'info>,
+
     pub system_program: Program<'info, System>,
 }
+ 
