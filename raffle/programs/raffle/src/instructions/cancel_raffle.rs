@@ -13,7 +13,7 @@ pub struct RaffleCancelled {
     pub raffle_id: u32,
     pub cancelled_by: Pubkey,
     pub cancelled_time: i64,
-}
+} 
 
 pub fn cancel_raffle(ctx: Context<CancelRaffle>, _raffle_id: u32) -> Result<()> {
     require!(

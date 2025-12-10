@@ -1,78 +1,113 @@
-import BN from "bn.js";
-import * as web3 from "@solana/web3.js";
 import assert from "assert";
-import { createRaffleConfig, transferSol } from './helpers';
-import * as values from './values';
+import * as anchor from "@coral-xyz/anchor";
+import { startAnchor } from "solana-bankrun";
+import { BankrunProvider } from "anchor-bankrun";
+import * as web3 from "@solana/web3.js";
+import BN from "bn.js";
 
-describe("Test with valid creation", () => {
+import {
+  creation_fee_lamports,
+  ticket_fee_bps,
+  minimum_raffle_period,
+  maximum_raffle_period,
+  raffle_owner,
+  raffle_admin,
+  setProgram,
+  setProvider,
+  getProgram,
+  getProvider,
+  raffleConfigPda,
+} from "./values";
+
+describe("Raffle Config – Bankrun", () => {
+  let context: any;
+  let provider: BankrunProvider;
+
   before(async () => {
-    await transferSol(values.provider.wallet.payer, values.raffle_owner.publicKey, 1_000_000_000)
+    context = await startAnchor("", [], []);
+    provider = new BankrunProvider(context);
+
+    anchor.setProvider(provider);
+    setProvider(provider);
+
+    const program = anchor.workspace.Raffle as anchor.Program<any>;
+    setProgram(program);
+
+    // FUND OWNER DIRECTLY IN BANKRUN (no transfer instruction needed)
+    await context.setAccount(raffle_owner.publicKey, {
+      lamports: 10_000_000_000n,
+      owner: web3.SystemProgram.programId,
+      data: Buffer.alloc(0),
+      executable: false,
+    });
   });
 
   it("initialize raffle config and verify state", async () => {
+    const program = getProgram();
 
-    await createRaffleConfig(
-      values.program,
-      values.raffleConfigPda(),
-      values.raffle_owner,
-      values.raffle_admin.publicKey,
-      {
-        creationFeeLamports: values.creation_fee_lamports,
-        ticketFeeBps: values.ticket_fee_bps,
-        minPeriod: values.minimum_raffle_period,
-        maxPeriod: values.maximum_raffle_period
-      }
-    );
+    await program.methods
+      .initializeRaffleConfig(
+        raffle_owner.publicKey,
+        raffle_admin.publicKey,
+        new BN(creation_fee_lamports),
+        ticket_fee_bps,
+        minimum_raffle_period,
+        maximum_raffle_period
+      )
+      .accounts({
+        raffleConfig: raffleConfigPda(),
+        payer: raffle_owner.publicKey,
+        systemProgram: web3.SystemProgram.programId,
+      })
+      .signers([raffle_owner])
+      .rpc();
 
-    // FETCH ACCOUNT STATE AFTER INITIALIZATION
-    const account = await values.program.account.raffleConfig.fetch(values.raffleConfigPda());
+    const account = await program.account.raffleConfig.fetch(raffleConfigPda());
 
-    // ASSERT ALL STORED VALUES ARE CORRECT
-    assert.equal(account.raffleOwner.toString(), values.raffle_owner.publicKey.toString());
-    assert.equal(account.raffleAdmin.toString(), values.raffle_admin.publicKey.toString());
-    assert.equal(account.creationFeeLamports.toNumber(), values.creation_fee_lamports);
-    assert.equal(account.ticketFeeBps, values.ticket_fee_bps);
-    assert.equal(account.minimumRafflePeriod, values.minimum_raffle_period);
-    assert.equal(account.maximumRafflePeriod, values.maximum_raffle_period);
+    assert.equal(account.raffleOwner.toString(), raffle_owner.publicKey.toString());
+    assert.equal(account.raffleAdmin.toString(), raffle_admin.publicKey.toString());
+    assert.equal(account.creationFeeLamports.toNumber(), creation_fee_lamports);
+    assert.equal(account.ticketFeeBps, ticket_fee_bps);
+    assert.equal(account.minimumRafflePeriod, minimum_raffle_period);
+    assert.equal(account.maximumRafflePeriod, maximum_raffle_period);
 
-    // Additional defaults:
-    assert.equal(account.raffleCount, 1);     // first config
-    assert.equal(account.pauseFlags, 0);      // by default
-    assert.ok(account.configBump >= 0);       // bump must exist
-
+    // defaults
+    assert.equal(account.raffleCount, 1);
+    assert.equal(account.pauseFlags, 0);
+    assert.ok(account.configBump >= 0);
   });
 
   it("updates raffle admin successfully", async () => {
+    const program = getProgram();
     const new_admin = web3.Keypair.generate().publicKey;
 
-    // Owner is now the "new_owner" from previous test
-    const account_before = await values.program.account.raffleConfig.fetch(values.raffleConfigPda());
-    const current_owner = account_before.raffleOwner;
+    const beforeState = await program.account.raffleConfig.fetch(raffleConfigPda());
+    const storedOwner = beforeState.raffleOwner;
 
-    await values.program.methods
+    await program.methods
       .updateRaffleConfigAdmin(new_admin)
       .accounts({
-        raffleConfig: values.raffleConfigPda(),
-        raffleOwner: current_owner, // correct owner signer
+        raffleConfig: raffleConfigPda(),
+        raffleOwner: storedOwner,
       })
-      .signers([values.raffle_owner]) // original_wallet still signs (still has keypair)
+      .signers([raffle_owner])
       .rpc();
 
-    const updated = await values.program.account.raffleConfig.fetch(values.raffleConfigPda());
-
+    const updated = await program.account.raffleConfig.fetch(raffleConfigPda());
     assert.equal(updated.raffleAdmin.toString(), new_admin.toString());
   });
 
   it("updates config data successfully", async () => {
+    const program = getProgram();
     const new_min = 7200;
     const new_max = 12000;
     const new_fee = new BN(200_000_000);
     const new_bps = 200;
 
-    const account_before = await values.program.account.raffleConfig.fetch(values.raffleConfigPda());
-    const current_owner = account_before.raffleOwner;
+    const beforeState = await program.account.raffleConfig.fetch(raffleConfigPda());
+    const storedOwner = beforeState.raffleOwner;
 
-    await values.program.methods
+    await program.methods
       .updateRaffleConfigData(
         new_fee,
         new_bps,
@@ -80,49 +115,50 @@ describe("Test with valid creation", () => {
         new_max
       )
       .accounts({
-        raffleConfig: values.raffleConfigPda(),
-        raffleOwner: current_owner,
+        raffleConfig: raffleConfigPda(),
+        raffleOwner: storedOwner,
       })
-      .signers([values.raffle_owner])
+      .signers([raffle_owner])
       .rpc();
 
-    const account_after = await values.program.account.raffleConfig.fetch(values.raffleConfigPda());
+    const updated = await program.account.raffleConfig.fetch(raffleConfigPda());
 
-    assert.equal(account_after.minimumRafflePeriod, new_min);
-    assert.equal(account_after.maximumRafflePeriod, new_max);
-    assert.equal(account_after.ticketFeeBps, new_bps);
-    assert.equal(account_after.creationFeeLamports.toNumber(), new_fee.toNumber());
+    assert.equal(updated.minimumRafflePeriod, new_min);
+    assert.equal(updated.maximumRafflePeriod, new_max);
+    assert.equal(updated.ticketFeeBps, new_bps);
+    assert.equal(updated.creationFeeLamports.toNumber(), new_fee.toNumber());
   });
 
   it("updates pause flags", async () => {
-    const account_before = await values.program.account.raffleConfig.fetch(values.raffleConfigPda());
-    const current_owner = account_before.raffleOwner;
-
+    const program = getProgram();
     const new_flags = 5;
 
-    await values.program.methods
+    const beforeState = await program.account.raffleConfig.fetch(raffleConfigPda());
+    const storedOwner = beforeState.raffleOwner;
+
+    await program.methods
       .updatePauseAndUnpause(new_flags)
       .accounts({
-        raffleConfig: values.raffleConfigPda(),
-        raffleOwner: current_owner,
+        raffleConfig: raffleConfigPda(),
+        raffleOwner: storedOwner,
       })
-      .signers([values.raffle_owner])
+      .signers([raffle_owner])
       .rpc();
 
-    const account_after = await values.program.account.raffleConfig.fetch(values.raffleConfigPda());
-
-    assert.equal(account_after.pauseFlags, new_flags);
+    const updated = await program.account.raffleConfig.fetch(raffleConfigPda());
+    assert.equal(updated.pauseFlags, new_flags);
   });
 
   it("fails when wrong owner tries to update config", async () => {
+    const program = getProgram();
     const fake_owner = web3.Keypair.generate();
 
     await assert.rejects(
-      values.program.methods
+      program.methods
         .updatePauseAndUnpause(77)
         .accounts({
-          raffleConfig: values.raffleConfigPda(),
-          raffleOwner: fake_owner.publicKey, // ❌ does NOT match stored owner
+          raffleConfig: raffleConfigPda(),
+          raffleOwner: fake_owner.publicKey,
         })
         .signers([fake_owner])
         .rpc()
@@ -130,84 +166,90 @@ describe("Test with valid creation", () => {
   });
 
   it("update fails if minimum period = 0", async () => {
+    const program = getProgram();
+
     await assert.rejects(
-      values.program.methods
+      program.methods
         .updateRaffleConfigData(
-          values.creation_fee_lamports,
-          values.ticket_fee_bps,
-          0,               // ❌ INVALID
-          values.maximum_raffle_period
+          new BN(creation_fee_lamports),
+          ticket_fee_bps,
+          0,
+          maximum_raffle_period
         )
         .accounts({
-          raffleConfig: values.raffleConfigPda(),
-          raffleOwner: values.raffle_owner.publicKey,
+          raffleConfig: raffleConfigPda(),
+          raffleOwner: raffle_owner.publicKey,
         })
-        .signers([values.raffle_owner])
+        .signers([raffle_owner])
         .rpc()
     );
   });
 
   it("update fails if max period < min period", async () => {
+    const program = getProgram();
+
     await assert.rejects(
-      values.program.methods
+      program.methods
         .updateRaffleConfigData(
-          values.creation_fee_lamports,
-          values.ticket_fee_bps,
-          3600,     // min
-          1000      // ❌ max < min
+          new BN(creation_fee_lamports),
+          ticket_fee_bps,
+          3600,
+          1000
         )
         .accounts({
-          raffleConfig: values.raffleConfigPda(),
-          raffleOwner: values.raffle_owner.publicKey,
+          raffleConfig: raffleConfigPda(),
+          raffleOwner: raffle_owner.publicKey,
         })
-        .signers([values.raffle_owner])
+        .signers([raffle_owner])
+        .rpc()
+    );
+  });
+});
+
+describe("Invalid creation tests", () => {
+  it("fails if min period = 0", async () => {
+    const program = getProgram();
+
+    await assert.rejects(
+      program.methods
+        .initializeRaffleConfig(
+          raffle_owner.publicKey,
+          raffle_admin.publicKey,
+          new BN(creation_fee_lamports),
+          ticket_fee_bps,
+          0,
+          maximum_raffle_period
+        )
+        .accounts({
+          raffleConfig: raffleConfigPda(),
+          payer: raffle_owner.publicKey,
+          systemProgram: web3.SystemProgram.programId,
+        })
+        .signers([raffle_owner])
         .rpc()
     );
   });
 
+  it("fails if max < min", async () => {
+    const program = getProgram();
+
+    await assert.rejects(
+      program.methods
+        .initializeRaffleConfig(
+          raffle_owner.publicKey,
+          raffle_admin.publicKey,
+          new BN(creation_fee_lamports),
+          ticket_fee_bps,
+          minimum_raffle_period,
+          1000
+        )
+        .accounts({
+          raffleConfig: raffleConfigPda(),
+          payer: raffle_owner.publicKey,
+          systemProgram: web3.SystemProgram.programId,
+        })
+        .signers([raffle_owner])
+        .rpc()
+    );
+  });
 });
-
-describe("Test with Invalid creation data", () => {
-
-  it("fails if minimum raffle period = 0", async () => {
-
-    await assert.rejects(values.program.methods
-      .initializeRaffleConfig(
-        values.raffle_owner.publicKey,
-        values.raffle_admin.publicKey,
-        new BN(values.creation_fee_lamports),
-        values.ticket_fee_bps,
-        0,                     // ❌ INVALID: min period = 0
-        values.maximum_raffle_period
-      )
-      .accounts({
-        raffleConfig: values.raffleConfigPda(),
-        payer: values.raffle_owner.publicKey,
-        systemProgram: web3.SystemProgram.programId,
-      })
-      .signers([values.raffle_owner])
-      .rpc()
-    );
-  });
-
-  it("fails if maximum period is less than minimum period", async () => {
-
-    await assert.rejects(values.program.methods
-      .initializeRaffleConfig(
-        values.raffle_owner.publicKey,
-        values.raffle_admin.publicKey,
-        new BN(values.creation_fee_lamports),
-        values.ticket_fee_bps,
-        values.minimum_raffle_period,           // min = 1 hour
-        1000            // ❌ max < min → invalid
-      )
-      .accounts({
-        raffleConfig: values.raffleConfigPda(),
-        payer: values.raffle_owner.publicKey,
-        systemProgram: web3.SystemProgram.programId,
-      })
-      .signers([values.raffle_owner])
-      .rpc()
-    );
-  });
-})

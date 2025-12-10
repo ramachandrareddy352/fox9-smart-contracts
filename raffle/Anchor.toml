@@ -6,7 +6,7 @@ seeds = false
 skip-lint = false
 
 [programs.localnet]
-constants = "3f4Hj369oD79D71UeVZ5NQSxxh1vJ7WLmzyKghPx8bHF"
+raffle = "3f4Hj369oD79D71UeVZ5NQSxxh1vJ7WLmzyKghPx8bHF"
 
 [registry]
 url = "https://api.apr.dev"
@@ -16,10 +16,14 @@ cluster = "Localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
-test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/activate_raffle.test.ts"
+test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/cancel_raffle.test.ts"
 client = "yarn run ts-node client/*.ts"
 
 [test.validator]
 bind_address = "127.0.0.1"
 ledger = ".anchor/test-ledger"
 rpc_port = 8899
+warp = true
+
+[[test.validator.args]]
+validator = ["--warp-slot"]

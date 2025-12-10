@@ -1,156 +1,90 @@
+// tests/helpers.ts
 import * as anchor from "@coral-xyz/anchor";
-import { Keypair, SystemProgram, PublicKey, Transaction, Connection } from "@solana/web3.js";
+import { Keypair, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import {
-    Token,
-    ASSOCIATED_TOKEN_PROGRAM_ID,
+    createInitializeMintInstruction,
+    createAssociatedTokenAccountIdempotentInstruction,
+    createMintToCheckedInstruction,
+    createTransferCheckedInstruction,
     TOKEN_PROGRAM_ID,
-    TOKEN_2022_PROGRAM_ID,
-    MINT_SIZE,
-    getAssociatedTokenAddress,
-    createMint,
-    createAssociatedTokenAccount,
-    mintTo,
-    transfer,
-    getOrCreateAssociatedTokenAccount,
+    getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import { PrizeType } from "../target/types/raffle";
+import { getProgram, getProvider, raffleConfigPda } from "./values";
 
-export async function transferSol(
-    from: Keypair,
-    to: PublicKey,
-    lamports: number
-) {
-    const connection = new Connection("http://127.0.0.1:8899", "confirmed");
+// === CORE HELPERS (Bankrun Compatible) ===
+
+export async function createSplMint(decimals = 9): Promise<PublicKey> {
+    const provider = getProvider();
+    const mint = Keypair.generate();
+
+    const lamports = await provider.connection.getMinimumBalanceForRentExemption(82);
+    const tx = new Transaction().add(
+        SystemProgram.createAccount({
+            fromPubkey: provider.wallet.publicKey,
+            newAccountPubkey: mint.publicKey,
+            space: 82,
+            lamports,
+            programId: TOKEN_PROGRAM_ID,
+        }),
+        createInitializeMintInstruction(mint.publicKey, decimals, provider.wallet.publicKey, null)
+    );
+
+    await provider.sendAndConfirm(tx, [mint]);
+    return mint.publicKey;
+}
+
+export async function createNftMint(): Promise<PublicKey> {
+    return createSplMint(0);
+}
+
+export async function createAta(mint: PublicKey, owner: PublicKey): Promise<PublicKey> {
+    const provider = getProvider();
+    const ata = getAssociatedTokenAddressSync(mint, owner, true);
 
     const tx = new Transaction().add(
-        SystemProgram.transfer({
-            fromPubkey: from.publicKey,
-            toPubkey: to,
-            lamports,
-        })
+        createAssociatedTokenAccountIdempotentInstruction(
+            provider.wallet.publicKey,
+            ata,
+            owner,
+            mint
+        )
     );
 
-    const signature = await connection.sendTransaction(tx, [from], {
-        skipPreflight: false,
-        preflightCommitment: "confirmed",
-    });
-
-    await connection.confirmTransaction({
-        signature,
-        commitment: "confirmed",
-    });
-
-    return signature;
+    await provider.sendAndConfirm(tx);
+    return ata;
 }
 
-export async function createSplMint(
-    provider: anchor.AnchorProvider,
-    decimals = 9
-): Promise<PublicKey> {
-    return await createMint(
-        provider.connection,
-        provider.wallet.payer,
-        provider.wallet.publicKey,
-        null,
-        decimals
+export async function mintTokens(mint: PublicKey, to: PublicKey, amount: number, decimals = 9) {
+    const provider = getProvider();
+    const tx = new Transaction().add(
+        createMintToCheckedInstruction(mint, to, provider.wallet.publicKey, amount, decimals)
     );
+    await provider.sendAndConfirm(tx);
 }
 
-export async function createNftMint(
-    provider: anchor.AnchorProvider
-): Promise<PublicKey> {
-    // NFT = decimals = 0, supply = 1
-    return await createMint(
-        provider.connection,
-        provider.wallet.payer,
-        provider.wallet.publicKey,
-        null,
-        0
-    );
-}
-
-export async function createAta(
-    provider: anchor.AnchorProvider,
+export async function transferTokens(
+    from: PublicKey,
+    to: PublicKey,
     mint: PublicKey,
-    owner: PublicKey
-): Promise<PublicKey> {
-    const ata = await getOrCreateAssociatedTokenAccount(
-        provider.connection,
-        provider.wallet.payer,  // payer funds creation
-        mint,
-        owner,
-        true,                  // allowOwnerOffCurve? false = safer for tests
-        undefined,              // commitment
-        undefined,
-        TOKEN_PROGRAM_ID,
-        ASSOCIATED_TOKEN_PROGRAM_ID
-    );
-
-    return ata.address; // <-- IMPORTANT FIX
-}
-
-export async function mintTokensToAta(
-    provider: anchor.AnchorProvider,
-    mint: PublicKey,
-    ata: PublicKey,
-    amount: number
-) {
-    await mintTo(
-        provider.connection,
-        provider.wallet.payer,
-        mint,
-        ata,
-        provider.wallet.publicKey,
-        amount
-    );
-}
-
-export async function transferTokensToAta(
-    provider: anchor.AnchorProvider,
-    fromAta: PublicKey,
-    toAta: PublicKey,
+    amount: number,
     owner: Keypair,
-    amount: number
+    decimals = 9
 ) {
-    await transfer(
-        provider.connection,
-        provider.wallet.payer,
-        fromAta,
-        toAta,
-        owner.publicKey,
-        amount,
-        [],
-        TOKEN_PROGRAM_ID
+    const provider = getProvider();
+    const tx = new Transaction().add(
+        createTransferCheckedInstruction(from, mint, to, owner.publicKey, amount, decimals)
     );
+    await provider.sendAndConfirm(tx, [owner]);
 }
 
-/**
- * Increase validator time
- * ONLY WORKS ON local test validator
- */
-export async function warpTime(
-    provider: anchor.AnchorProvider,
-    seconds: number
-) {
-    await provider.connection._rpcRequest("warp", [
-        (Date.now() / 1000 + seconds)
-    ]);
-}
+// === RAFFLE CONFIG ===
 
-/**
- * Helper to create raffle config using your instruction
- */
 export async function createRaffleConfig(
     program: anchor.Program,
-    configPda: PublicKey,
     owner: Keypair,
     admin: PublicKey,
-    {
-        creationFeeLamports,
-        ticketFeeBps,
-        minPeriod,
-        maxPeriod,
-    }: {
+    params: {
         creationFeeLamports: number;
         ticketFeeBps: number;
         minPeriod: number;
@@ -161,13 +95,13 @@ export async function createRaffleConfig(
         .initializeRaffleConfig(
             owner.publicKey,
             admin,
-            new anchor.BN(creationFeeLamports),
-            ticketFeeBps,
-            minPeriod,
-            maxPeriod
+            new anchor.BN(params.creationFeeLamports),
+            params.ticketFeeBps,
+            params.minPeriod,
+            params.maxPeriod
         )
         .accounts({
-            raffleConfig: configPda,
+            raffleConfig: raffleConfigPda(),
             payer: owner.publicKey,
             systemProgram: SystemProgram.programId,
         })
@@ -175,71 +109,31 @@ export async function createRaffleConfig(
         .rpc();
 }
 
+// === CREATE RAFFLE ===
 
-/**
- * Build necessary PDAs & accounts for create_raffle
- */
 export async function buildCreateRaffleAccounts(
-    provider: anchor.AnchorProvider,
     rafflePda: PublicKey,
     creator: Keypair,
-    {
-        ticketMint,
-        prizeMint,
-    }: {
-        ticketMint: PublicKey;
-        prizeMint: PublicKey;
-    }
+    ticketMint: PublicKey,
+    prizeMint: PublicKey
 ) {
-    const creatorPrizeAta = await createAta(provider, prizeMint, creator.publicKey);
-    const prizeEscrow = await createAta(provider, prizeMint, rafflePda);
-    const ticketEscrow = await createAta(provider, ticketMint, rafflePda);
-
-    return {
-        ticketEscrow,
-        prizeEscrow,
-        creatorPrizeAta,
-    };
+    const creatorPrizeAta = await createAta(prizeMint, creator.publicKey);
+    const prizeEscrow = await createAta(prizeMint, rafflePda);
+    const ticketEscrow = await createAta(ticketMint, rafflePda);
+    return { ticketEscrow, prizeEscrow, creatorPrizeAta };
 }
 
-export async function getSolBalance(
-    provider: anchor.AnchorProvider,
-    owner: PublicKey
-) {
-    const lamports = await provider.connection.getBalance(owner, "confirmed");
-    return lamports;                     // raw lamports
-}
-
-export async function getSplBalance(
-    provider: anchor.AnchorProvider,
-    ata: PublicKey
-) {
-    const result = await provider.connection.getTokenAccountBalance(
-        ata,
-        "confirmed"
-    );
-
-    return {
-        raw: Number(result.value.amount),                 // integer amount
-        ui: Number(result.value.uiAmount),                // decimal adjusted amount
-        decimals: result.value.decimals,
-    };
-}
-
-/**
- * CALL create_raffle instruction
- */
 export async function createRaffle(
     program: anchor.Program,
     args: {
-        startTime: number;  // Unix timestamp in seconds
+        startTime: number;
         endTime: number;
         totalTickets: number;
-        ticketPrice: number; // lamports
+        ticketPrice: number;
         isTicketSol: boolean;
         maxPct: number;
         prizeType: PrizeType;
-        prizeAmount: number; // lamports or token amount
+        prizeAmount: number;
         numWinners: number;
         winShares: number[];
         unique: boolean;
@@ -257,20 +151,20 @@ export async function createRaffle(
         creatorPrizeAta: PublicKey;
     }
 ) {
-    await program.methods
+    const response = await program.methods
         .createRaffle(
-            new anchor.BN(args.startTime),    // i64
-            new anchor.BN(args.endTime),      // i64
-            args.totalTickets,                // u16
-            new anchor.BN(args.ticketPrice),  // u64
-            args.isTicketSol,                 // bool
-            args.maxPct,                      // u8
-            args.prizeType,                   // PrizeType enum
-            new anchor.BN(args.prizeAmount),  // u64
-            args.numWinners,                  // u8
-            Buffer.from(args.winShares),                   // Vec<u8>
-            args.unique,                      // bool
-            args.autoStart                    // bool
+            new anchor.BN(args.startTime),
+            new anchor.BN(args.endTime),
+            args.totalTickets,
+            new anchor.BN(args.ticketPrice),
+            args.isTicketSol,
+            args.maxPct,
+            args.prizeType,
+            new anchor.BN(args.prizeAmount),
+            args.numWinners,
+            Buffer.from(args.winShares),
+            args.unique,
+            args.autoStart
         )
         .accounts({
             raffleConfig: accounts.raffleConfig,
@@ -288,29 +182,115 @@ export async function createRaffle(
         })
         .signers([accounts.creator, accounts.raffleAdmin])
         .rpc();
+
+    console.log(response);
 }
 
-// Helper to update raffle ticketing
+// === ACTIVATE RAFFLE ===
+
+export async function activateRaffle(
+    program: anchor.Program,
+    rafflePda: PublicKey,
+    raffleId: number,
+    admin: Keypair
+) {
+    await program.methods
+        .activateRaffle(raffleId)
+        .accounts({
+            raffleConfig: raffleConfigPda(),
+            raffle: rafflePda,
+            raffleAdmin: admin.publicKey,
+        })
+        .signers([admin])
+        .rpc();
+}
+
+// === CANCEL RAFFLE ===
+
+export async function cancelRaffle(
+    program: anchor.Program,
+    rafflePda: PublicKey,
+    raffleId: number,
+    creator: Keypair,
+    admin: Keypair,
+    prizeMint: PublicKey,
+    prizeEscrow: PublicKey,
+    creatorPrizeAta: PublicKey,
+) {
+    await program.methods
+        .cancelRaffle(raffleId)
+        .accounts({
+            raffleConfig: raffleConfigPda(),
+            raffle: rafflePda,
+            creator: creator.publicKey,
+            raffleAdmin: admin.publicKey,
+            prizeMint,
+            prizeEscrow,
+            creatorPrizeAta,
+            prizeTokenProgram: TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+        })
+        .signers([creator, admin])
+        .rpc();
+}
+
+
+// === BUY TICKETS ===
+
+export async function buyTickets(
+    program: anchor.Program,
+    rafflePda: PublicKey,
+    raffleId: number,
+    buyer: Keypair,
+    ticketsToBuy: number,
+    ticketMint: PublicKey,
+    ticketEscrow: PublicKey,
+    buyerTicketAta: PublicKey,
+    raffleAdmin: Keypair
+) {
+    const buyerAccount = PublicKey.findProgramAddressSync(
+        [
+            Buffer.from("raffle"),
+            new anchor.BN(raffleId).toArrayLike(Buffer, "le", 4),
+            buyer.publicKey.toBuffer(),
+        ],
+        program.programId
+    )[0];
+
+    await program.methods
+        .buyTicket(raffleId, ticketsToBuy)
+        .accounts({
+            raffleConfig: raffleConfigPda(),
+            raffle: rafflePda,
+            buyerAccount,
+            buyer: buyer.publicKey,
+            raffleAdmin: raffleAdmin.publicKey,
+            ticketMint,
+            buyerTicketAta,
+            ticketEscrow,
+            ticketTokenProgram: TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+        })
+        .signers([buyer, raffleAdmin])
+        .rpc();
+}
+
+// === UPDATE RAFFLE ===
+
 export async function updateRaffleTicketing(
     program: anchor.Program,
-    raffleConfig: PublicKey,
     rafflePda: PublicKey,
     raffleId: number,
     newTotalTickets: number,
     newTicketPrice: number,
     newMaxPct: number,
     creator: Keypair,
-    admin: Keypair,
+    admin: Keypair
 ) {
     await program.methods
-        .updateRaffleTicketing(
-            raffleId,
-            newTotalTickets,
-            new anchor.BN(newTicketPrice),
-            newMaxPct
-        )
+        .updateRaffleTicketing(raffleId, newTotalTickets, new anchor.BN(newTicketPrice), newMaxPct)
         .accounts({
-            raffleConfig: raffleConfig,
+            raffleConfig: raffleConfigPda(),
             raffle: rafflePda,
             creator: creator.publicKey,
             raffleAdmin: admin.publicKey,
@@ -319,10 +299,8 @@ export async function updateRaffleTicketing(
         .rpc();
 }
 
-// Helper to update raffle time
 export async function updateRaffleTime(
     program: anchor.Program,
-    raffleConfig: PublicKey,
     rafflePda: PublicKey,
     raffleId: number,
     newStartTime: number,
@@ -331,13 +309,9 @@ export async function updateRaffleTime(
     admin: Keypair
 ) {
     await program.methods
-        .updateRaffleTime(
-            raffleId,
-            new anchor.BN(newStartTime),
-            new anchor.BN(newEndTime)
-        )
+        .updateRaffleTime(raffleId, new anchor.BN(newStartTime), new anchor.BN(newEndTime))
         .accounts({
-            raffleConfig: raffleConfig,
+            raffleConfig: raffleConfigPda(),
             raffle: rafflePda,
             creator: creator.publicKey,
             raffleAdmin: admin.publicKey,
@@ -346,10 +320,8 @@ export async function updateRaffleTime(
         .rpc();
 }
 
-// Helper to update raffle winners
 export async function updateRaffleWinners(
     program: anchor.Program,
-    raffleConfig: PublicKey,
     rafflePda: PublicKey,
     raffleId: number,
     newWinShares: number[],
@@ -358,13 +330,9 @@ export async function updateRaffleWinners(
     admin: Keypair
 ) {
     await program.methods
-        .updateRaffleWinners(
-            raffleId,
-            Buffer.from(newWinShares),
-            newUnique
-        )
+        .updateRaffleWinners(raffleId, Buffer.from(newWinShares), newUnique)
         .accounts({
-            raffleConfig: raffleConfig,
+            raffleConfig: raffleConfigPda(),
             raffle: rafflePda,
             creator: creator.publicKey,
             raffleAdmin: admin.publicKey,
@@ -373,45 +341,83 @@ export async function updateRaffleWinners(
         .rpc();
 }
 
-/**
- * Buy tickets in a raffle (supports both SOL and SPL tickets)
- */
-export async function buyTickets(
+// === ANNOUNCE WINNERS & CLAIM ===
+
+export async function announceWinners(
     program: anchor.Program,
-    raffleConfig: PublicKey,
     rafflePda: PublicKey,
     raffleId: number,
-    buyer: Keypair,
-    ticketsToBuy: number,
-    ticketMint: PublicKey,
-    ticketEscrow: PublicKey,
-    buyerTicketAta: PublicKey,
-    raffleAdmin: Keypair,
+    admin: Keypair
 ) {
-    const accounts = {
-        raffleConfig,
-        raffle: rafflePda,
-        buyerAccount: anchor.web3.PublicKey.findProgramAddressSync(
-            [
-                Buffer.from("raffle"),
-                new anchor.BN(raffleId).toArrayLike(Buffer, "le", 4),
-                buyer.publicKey.toBuffer(),
-            ],
-            program.programId
-        )[0],
-        buyer: buyer.publicKey,
-        raffleAdmin: raffleAdmin.publicKey,
-        ticketMint,
-        buyerTicketAta,
-        ticketEscrow,
-        ticketTokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: anchor.web3.SystemProgram.programId,
-    };
+    await program.methods
+        .announceWinners(raffleId)
+        .accounts({
+            raffleConfig: raffleConfigPda(),
+            raffle: rafflePda,
+            raffleAdmin: admin.publicKey,
+        })
+        .signers([admin])
+        .rpc();
+}
+
+export async function claimPrize(
+    program: anchor.Program,
+    rafflePda: PublicKey,
+    raffleId: number,
+    winner: Keypair,
+    prizeEscrow: PublicKey,
+    winnerPrizeAta: PublicKey,
+    prizeMint: PublicKey
+) {
+    const buyerAccount = PublicKey.findProgramAddressSync(
+        [
+            Buffer.from("raffle"),
+            new anchor.BN(raffleId).toArrayLike(Buffer, "le", 4),
+            winner.publicKey.toBuffer(),
+        ],
+        program.programId
+    )[0];
 
     await program.methods
-        .buyTicket(raffleId, ticketsToBuy)
-        .accounts(accounts)
-        .signers([buyer, raffleAdmin]) // raffle_admin must sign
+        .buyerClaimPrize(raffleId)
+        .accounts({
+            raffleConfig: raffleConfigPda(),
+            raffle: rafflePda,
+            buyerAccount,
+            winner: winner.publicKey,
+            prizeEscrow,
+            winnerPrizeAta,
+            prizeMint,
+            prizeTokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([winner])
         .rpc();
+}
 
+// === UTILS ===
+
+export async function getSolBalance(pubkey: PublicKey): Promise<number> {
+    return getProvider().connection.getBalance(pubkey);
+}
+
+export async function getTokenBalance(ata: PublicKey): Promise<number> {
+    const info = await getProvider().connection.getTokenAccountBalance(ata);
+    return Number(info.value.amount);
+}
+
+export function getCurrentTimestamp(): number {
+    return getProvider().context.clock.unixTimestamp.toNumber();
+}
+
+export function warpToTimestamp(seconds: number) {
+    const context = getProvider().context;
+    context.setClock({
+        unixTimestamp: seconds,
+        slot: context.clock.slot + 100,
+    });
+}
+
+export function warpForward(seconds: number) {
+    const current = getCurrentTimestamp();
+    warpToTimestamp(current + seconds);
 }
