@@ -6,7 +6,7 @@ use crate::errors::{AuctionStateErrors, ConfigStateErrors};
 use crate::helpers::*;
 use crate::states::*;
 use crate::utils::*;
-
+ 
 #[event]
 pub struct AuctionCreated {
     pub auction_id: u32,
@@ -33,7 +33,7 @@ pub fn create_auction(
         !is_paused(config.pause_flags, CREATE_AUCTION_PAUSE),
         AuctionStateErrors::FunctionPaused
     );
-
+ 
     let auction = &mut ctx.accounts.auction;
     let creator = &ctx.accounts.creator;
     let now = Clock::get()?.unix_timestamp;

@@ -6,7 +6,7 @@ pub fn initialize_auction_config(
     ctx: Context<InitializeAuctionConfig>,
     auction_owner: Pubkey,
     auction_admin: Pubkey,
-    creation_fee_lamports: u64,
+    creation_fee_lamports: u64, 
     commission_bps: u16,
     minimum_auction_period: u32,
     maximum_auction_period: u32,

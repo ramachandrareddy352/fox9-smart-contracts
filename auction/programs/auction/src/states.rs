@@ -7,7 +7,7 @@ pub struct AuctionConfig {
     pub auction_admin: Pubkey,
 
     pub creation_fee_lamports: u64,
-    pub commission_bps: u16,
+    pub commission_bps: u16, 
     
     pub minimum_auction_period: u32,
     pub maximum_auction_period: u32,
@@ -49,11 +49,12 @@ pub struct Auction {
 }
 
 #[derive(InitSpace, AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum AuctionState {
-    None,
-    Initialized,
-    Active,
-    Cancelled,  // when creator cancel the auction
-    CompletedSuccessfully,
-    CompletedFailed,
+    None = 0,
+    Initialized = 1,
+    Active = 2,
+    Cancelled = 3,  // when creator cancel the auction
+    CompletedSuccessfully = 4,
+    CompletedFailed = 5,
 }
