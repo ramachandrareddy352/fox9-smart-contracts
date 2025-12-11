@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 use crate::constants::{BUYER_CLAIM_PRIZE_PAUSE, TOTAL_PCT};
-use crate::errors::{ConfigStateErrors, KeysMismatchErrors, RaffleStateErrors};
+use crate::errors::*;
 use crate::helpers::*;
 use crate::states::*;
 use crate::utils::{get_pct_amount, is_paused};
@@ -80,13 +80,11 @@ pub fn buyer_claim_prize(ctx: Context<BuyerClaimPrize>, raffle_id: u32) -> Resul
                     .ok_or(RaffleStateErrors::Overflow)?;
             }
 
-            transfer_sol_with_seeds(
-                &raffle.to_account_info(),
-                &winner.to_account_info(),
-                &ctx.accounts.system_program,
-                signer_seeds,
-                total_send,
-            )?;
+            // transfer the sol prize to WINNER
+            require!(raffle.to_account_info().lamports() > total_send, TransferErrors::InsufficientSolBalance);
+
+            **raffle.to_account_info().try_borrow_mut_lamports()? -= total_send;
+            **winner.to_account_info().try_borrow_mut_lamports()? += total_send;
 
             // Emit per-index events
             for &idx in claim_indices.iter() {

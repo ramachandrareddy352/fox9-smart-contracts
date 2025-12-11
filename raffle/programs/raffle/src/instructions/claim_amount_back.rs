@@ -3,7 +3,7 @@ use anchor_spl::token_interface::{
     close_account, CloseAccount, Mint, TokenAccount, TokenInterface,
 };
 use crate::constants::CLAIM_AMOUNT_BACK_PAUSE;
-use crate::errors::{ConfigStateErrors, KeysMismatchErrors, RaffleStateErrors};
+use crate::errors::*;
 use crate::helpers::*;
 use crate::states::*;
 use crate::utils::is_paused;
@@ -60,13 +60,11 @@ pub fn claim_amount_back(ctx: Context<ClaimAmountBack>, raffle_id: u32) -> Resul
     if prize_amount_claimable > 0 {
         match raffle.prize_type {
             PrizeType::Sol => {
-                transfer_sol_with_seeds(
-                    &raffle.to_account_info(),
-                    &creator.to_account_info(),
-                    &ctx.accounts.system_program,
-                    signer_seeds,
-                    prize_amount_claimable,
-                )?;
+                // transfer the sol prize to CREATOR
+                require!(raffle.to_account_info().lamports() > prize_amount_claimable, TransferErrors::InsufficientSolBalance);
+
+                **raffle.to_account_info().try_borrow_mut_lamports()? -= prize_amount_claimable;
+                **creator.to_account_info().try_borrow_mut_lamports()? += prize_amount_claimable;
             }
             PrizeType::Nft | PrizeType::Spl => {
                 let stored_prize_mint = raffle
@@ -117,14 +115,11 @@ pub fn claim_amount_back(ctx: Context<ClaimAmountBack>, raffle_id: u32) -> Resul
     // --- Claim ticket revenue (after platform fee) ---
     if ticket_amount_claimable > 0 {
         if raffle.ticket_mint.is_none() {
-            // SOL ticket revenue
-            transfer_sol_with_seeds(
-                &raffle.to_account_info(),
-                &creator.to_account_info(),
-                &ctx.accounts.system_program,
-                signer_seeds,
-                ticket_amount_claimable,
-            )?;
+            // transfer the sol tickets to CREATOR
+            require!(raffle.to_account_info().lamports() > ticket_amount_claimable, TransferErrors::InsufficientSolBalance);
+
+            **raffle.to_account_info().try_borrow_mut_lamports()? -= ticket_amount_claimable;
+            **creator.to_account_info().try_borrow_mut_lamports()? += ticket_amount_claimable;
         } else {
             // SPL ticket revenue
             let stored_ticket_mint = raffle

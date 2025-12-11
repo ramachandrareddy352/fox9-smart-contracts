@@ -518,7 +518,7 @@ export async function warpForward(seconds: number) {
     const context = getProvider().context;
     const client = context.banksClient;
     const nowClock = await client.getClock();
-    const newTime = Number(nowClock.unixTimestamp) + 400;
+    const newTime = Number(nowClock.unixTimestamp) + seconds;
     console.log("newTime => ", newTime)
 
     context.setClock(

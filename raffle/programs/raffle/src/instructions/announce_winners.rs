@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 use crate::constants::*;
-use crate::errors::{ConfigStateErrors, KeysMismatchErrors, RaffleStateErrors};
+use crate::errors::*;
 use crate::helpers::{transfer_sol_with_seeds, transfer_tokens_with_seeds};
 use crate::states::*;
 use crate::utils::{get_pct_amount, has_duplicate_pubkeys, is_paused};
@@ -147,7 +147,6 @@ pub fn announce_winners(
 fn process_ticket_revenue(ctx: &mut Context<AnnounceWinners>, tickets_sold: u16) -> Result<()> {
     let raffle = &mut ctx.accounts.raffle;
     let raffle_config = &ctx.accounts.raffle_config;
-    let system_program = &ctx.accounts.system_program;
 
     let total_revenue = raffle
         .ticket_price
@@ -177,13 +176,12 @@ fn process_ticket_revenue(ctx: &mut Context<AnnounceWinners>, tickets_sold: u16)
     match raffle.ticket_mint {
         None => {
             // SOL: transfer fee to config PDA
-            transfer_sol_with_seeds(
-                &raffle_ai,
-                &raffle_config.to_account_info(),
-                system_program,
-                seeds,
-                fee_amount,
-            )?;
+            let to = raffle_config.to_account_info();
+
+            require!(raffle_ai.lamports() > fee_amount, TransferErrors::InsufficientSolBalance);
+
+            **raffle_ai.try_borrow_mut_lamports()? -= fee_amount;
+            **to.try_borrow_mut_lamports()? += fee_amount;
         }
         Some(stored_mint) => {
             let escrow = &ctx.accounts.ticket_escrow;
@@ -235,6 +233,7 @@ fn process_ticket_revenue(ctx: &mut Context<AnnounceWinners>, tickets_sold: u16)
 #[instruction(raffle_id: u32)]
 pub struct AnnounceWinners<'info> {
     #[account(
+        mut,
         seeds = [b"raffle"],
         bump = raffle_config.config_bump,
         constraint = raffle_config.raffle_admin == raffle_admin.key() @ ConfigStateErrors::InvalidRaffleAdmin,

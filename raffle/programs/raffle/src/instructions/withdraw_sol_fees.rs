@@ -1,5 +1,4 @@
 use crate::errors::{ConfigStateErrors, TransferErrors};
-use crate::helpers::transfer_sol_with_seeds;
 use crate::states::RaffleConfig;
 use anchor_lang::prelude::*;
 use anchor_lang::system_program::System;
