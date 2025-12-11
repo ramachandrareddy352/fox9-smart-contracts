@@ -91,8 +91,16 @@ pub fn announce_winners(
     }
 
     // ---------------- SPL or SOL Prize Path ----------------
-    let sold_usize = tickets_sold as usize;
-    let actual_winners = sold_usize.min(num_winners);
+     let sold_usize = tickets_sold as usize;
+     let buyers_usize = raffle.buyers_count as usize;
+     
+     let actual_winners = if raffle.is_unique_winners {
+         // Each buyer can win at most once → limit winners by number of buyers
+         std::cmp::min(buyers_usize, num_winners)
+     } else {
+         // Non-unique winners → limit by tickets sold
+         std::cmp::min(sold_usize, num_winners)
+     };
 
     require!(
         winners.len() == actual_winners,
@@ -109,7 +117,7 @@ pub fn announce_winners(
     let mut claimable_back: u64 = 0;
     let total_pct = TOTAL_PCT;
 
-    if sold_usize < num_winners {
+    if actual_winners < num_winners {
         let assigned_pct: u8 = raffle.win_shares.iter().take(actual_winners).copied().sum();
 
         require!(

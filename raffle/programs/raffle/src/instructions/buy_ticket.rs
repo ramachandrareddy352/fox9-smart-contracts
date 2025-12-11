@@ -71,6 +71,11 @@ pub fn buy_ticket(ctx: Context<BuyTicket>, raffle_id: u32, tickets_to_buy: u16) 
     if buyer_account.tickets == 0 && buyer_account.user == Pubkey::default() {
         buyer_account.raffle_id = raffle.raffle_id as u32;
         buyer_account.user = buyer.key();
+
+        raffle.buyers_count = raffle
+            .buyers_count
+            .checked_add(1)
+            .ok_or(RaffleStateErrors::Overflow)?;
     } else {
         require_keys_eq!(
             buyer_account.user,

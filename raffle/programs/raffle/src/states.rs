@@ -30,6 +30,7 @@ pub struct Raffle {
 
     pub total_tickets: u16,          // [3 - 10,000](min - max)
     pub tickets_sold: u16,           // always <= total tickets
+    pub buyers_count: u16,           // always <= total tickets
     pub ticket_price: u64,           // price in terms of selected ticket_mint token
     pub ticket_mint: Option<Pubkey>, // buyer have to use this mint to buy the ticket, If the amount have to pay in terms of Native sol then set to None or set to mint address
     pub max_per_wallet_pct: u8, // max percentage of single wallet can buy the tickets from total tickets, check weather the percentage cannot able to buy single ticket we have to allow the single ticket to buy
