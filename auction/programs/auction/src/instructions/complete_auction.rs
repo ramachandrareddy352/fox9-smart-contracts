@@ -122,16 +122,12 @@ pub fn complete_auction(ctx: Context<CompleteAuction>, auction_id: u32) -> Resul
             transfer_sol_with_seeds(
                 &auction.to_account_info(),
                 &ctx.accounts.auction_config.to_account_info(),
-                &ctx.accounts.system_program,
-                signer_seeds,
                 fee_amount,
             )?;
             // Transfer creator amount to creator
             transfer_sol_with_seeds(
                 &auction.to_account_info(),
                 &ctx.accounts.creator,
-                &ctx.accounts.system_program,
-                signer_seeds,
                 creator_amount,
             )?;
         }

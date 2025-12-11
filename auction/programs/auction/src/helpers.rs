@@ -73,27 +73,17 @@ pub fn transfer_tokens<'info>(
 pub fn transfer_sol_with_seeds<'info>(
     from: &AccountInfo<'info>,
     to: &AccountInfo<'info>,
-    system_program: &Program<'info, System>,
-    signer_seeds: &[&[&[u8]]],
     amount: u64,
 ) -> Result<()> {
-    let from_lamports = from.lamports();
     require!(
-        from_lamports >= amount,
+        from.lamports() >= amount,
         TransferErrors::InsufficientSolBalance
     );
 
-    system_program::transfer(
-        CpiContext::new_with_signer(
-            system_program.to_account_info(),
-            system_program::Transfer {
-                from: from.to_account_info(),
-                to: to.to_account_info(),
-            },
-            signer_seeds,
-        ),
-        amount,
-    ).map_err(|_| TransferErrors::SolTransferFailed.into())
+    **from.try_borrow_mut_lamports()? -= amount;
+    **to.try_borrow_mut_lamports()? += amount;
+
+    Ok(())
 }
 
 // Transfer SOL from normal signer

@@ -27,8 +27,6 @@ pub fn withdraw_sol_fees(ctx: Context<WithdrawSolFees>, amount: u64) -> Result<(
     transfer_sol_with_seeds(
         &pda_ai,
         &ctx.accounts.receiver,
-        &ctx.accounts.system_program,
-        signer_seeds,
         amount,
     )?;
 
@@ -53,7 +51,8 @@ pub struct WithdrawSolFees<'info> {
     pub owner: Signer<'info>,
 
     #[account(mut)]
-    pub receiver: AccountInfo<'info>,
+    /// CHECK: receiver may be PDA or wallet address
+    pub receiver: UncheckedAccount<'info>,
 
     pub system_program: Program<'info, System>,
 }

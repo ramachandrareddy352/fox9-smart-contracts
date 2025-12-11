@@ -4,10 +4,14 @@
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"
   },
   "dependencies": {
-    "@coral-xyz/anchor": "0.29.0",
-    "@solana/web3.js": "1.78.4",
-    "assert": "*",
-    "bn.js": "*"
+    "@coral-xyz/anchor": "0.32.1",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
+    "anchor-bankrun": "^0.5.0",
+    "assert": "2.1.0",
+    "bn.js": "5.2.1",
+    "rpc-websockets": "^7.5.0",
+    "solana-bankrun": "^0.4.0"
   },
   "devDependencies": {
     "@types/bn.js": "^5.1.1",

@@ -7,7 +7,7 @@ pub mod utils;
 
 use {anchor_lang::prelude::*, instructions::*};
 
-declare_id!("E7x43w7pscmvUTemuzmW9w43CLggzC3axTrvHNPbCtK2");
+declare_id!("HDW5Huoqz7Us3yiMgxAEkekHUfGvggUPLEz7WZ8uSTBY");
 
 /// Sysvar for token mint and ATA creation
 // pub rent: Sysvar<'info, Rent>,

@@ -128,8 +128,6 @@ pub fn place_bid(ctx: Context<PlaceBid>, _auction_id: u32, bid_amount: u64) -> R
                 transfer_sol_with_seeds(
                     &auction.to_account_info(),
                     prev_account,
-                    &ctx.accounts.system_program,
-                    signer_seeds,
                     refunded_amount,
                 )?;
             }
