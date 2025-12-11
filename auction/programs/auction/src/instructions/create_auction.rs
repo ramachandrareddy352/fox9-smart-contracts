@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 use crate::constants::CREATE_AUCTION_PAUSE;
-use crate::errors::{AuctionStateErrors, ConfigStateErrors};
+use crate::errors::*;
 use crate::helpers::*;
 use crate::states::*;
 use crate::utils::*;
@@ -72,6 +72,7 @@ pub fn create_auction(
     auction.bid_mint = if is_bid_mint_sol {
         None
     } else {
+        require!(ctx.accounts.bid_mint.decimals != 0, KeysMismatchErrors::InvalidBidMint);
         Some(ctx.accounts.bid_mint.key())
     };
     auction.base_bid = base_bid;

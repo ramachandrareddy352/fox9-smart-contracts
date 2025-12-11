@@ -29,11 +29,6 @@ pub fn place_bid(ctx: Context<PlaceBid>, _auction_id: u32, bid_amount: u64) -> R
         auction.status == AuctionState::Active,
         AuctionStateErrors::AuctionNotActive
     );
-    require_gte!(
-        now,
-        auction.start_time,
-        AuctionStateErrors::AuctionNotStarted
-    );
     require_gt!(auction.end_time, now, AuctionStateErrors::AuctionNotStarted);
 
     // cannot be same as previous highest

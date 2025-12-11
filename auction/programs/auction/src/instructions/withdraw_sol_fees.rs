@@ -18,11 +18,9 @@ pub fn withdraw_sol_fees(ctx: Context<WithdrawSolFees>, amount: u64) -> Result<(
     let min_rent = rent.minimum_balance(pda_ai.data_len());
 
     require!(
-        pda_ai.lamports() >= min_rent + amount,
+        pda_ai.lamports() > min_rent + amount,
         TransferErrors::InsufficientSolBalance
     );
-
-    let signer_seeds: &[&[&[u8]]] = &[&[b"auction", &[config.config_bump]]];
 
     transfer_sol_with_seeds(
         &pda_ai,

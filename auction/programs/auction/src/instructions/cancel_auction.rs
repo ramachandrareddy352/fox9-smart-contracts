@@ -32,7 +32,7 @@ pub fn cancel_auction(ctx: Context<CancelAuction>, _auction_id: u32) -> Result<(
         auction.status == AuctionState::Initialized || auction.status == AuctionState::Active,
         AuctionStateErrors::AuctionAlreadyCompleted
     );
-
+ 
     require!(!auction.has_any_bid, AuctionStateErrors::AuctionHasBids);
 
     auction.status = AuctionState::Cancelled;

@@ -27,6 +27,11 @@ import {
     mintTokens,
     getCurrentTimestamp,
     deriveAuctionPda,
+    updateAuction,
+    warpForward,
+    getTokenBalance,
+    getSolBalance,
+    cancelAuction,
 } from "./helpers";
 
 import { Auction } from "../target/types/auction";
@@ -125,329 +130,185 @@ describe("Create Auction Tests", () => {
             throw new Error("NFT mint mismatch");
     });
 
-    // it("Reject: prize mint is SPL (not NFT)", async () => {
-    //     const creator = Keypair.generate();
-    //     await context.setAccount(creator.publicKey, {
-    //         lamports: 20_000_000_000,
-    //         owner: SystemProgram.programId,
-    //         executable: false,
-    //         data: Buffer.alloc(0),
-    //     });
+    it("Update Auction Successfully (valid update before start + no bids)", async () => {
+        // 1) Fetch config + determine auctionId
+        const cfg = await program.account.auctionConfig.fetch(auctionConfigPda());
+        const auctionId = cfg.auctionCount - 1;
+        const auctionPda = await deriveAuctionPda(program, auctionId);
 
-    //     // Create SPL mint (decimals 9, supply > 1)
-    //     const splMint = await createSplMint(9);
-    //     const creatorAta = await createAta(splMint, creator.publicKey);
-    //     await mintTokens(splMint, creatorAta, 1_000_000_000);
+        // 2) Fetch existing auction
+        let auctionBefore = await program.account.auction.fetch(auctionPda);
 
-    //     const now = await getCurrentTimestamp();
-    //     const startTime = now + 10;
-    //     const endTime = startTime + minimum_auction_period + 100;
+        console.log("Auction Before Update:");
+        console.log({
+            auctionId: auctionBefore.auctionId,
+            startTime: Number(auctionBefore.startTime),
+            endTime: Number(auctionBefore.endTime),
+            baseBid: Number(auctionBefore.baseBid),
+            minIncrement: Number(auctionBefore.minIncrement),
+            timeExtension: auctionBefore.timeExtension,
+            status: auctionBefore.status,
+            hasAnyBid: auctionBefore.hasAnyBid,
+        });
 
-    //     const cfg = await program.account.auctionConfig.fetch(auctionConfigPda());
-    //     const auctionId = cfg.auctionCount;
+        // wrap time and test the function to reject
+        // await warpForward(200);
 
-    //     const auctionPda = await buildAuctionPDAs(auctionId);
+        // 3) Calculate valid update values
+        const now = await getCurrentTimestamp();
+        const newStart = now + 120; // future start
+        const newEnd = newStart + minimum_auction_period + 200;
 
-    //     try {
-    //         await program.methods
-    //             .createAuction(
-    //                 new anchor.BN(startTime),
-    //                 new anchor.BN(endTime),
-    //                 false,
-    //                 true,
-    //                 new anchor.BN(1),
-    //                 new anchor.BN(10),
-    //                 minimum_time_extension
-    //             )
-    //             .accounts({
-    //                 auctionConfig: auctionConfigPda(),
-    //                 auction: auctionPda,
-    //                 creator: creator.publicKey,
-    //                 auctionAdmin: auction_admin.publicKey,
-    //                 prizeMint: splMint, // WRONG: not NFT
-    //                 bidMint: splMint,
+        const newBaseBid = 5000000;
+        const newMinIncrement = 20000;
+        const newTimeExtension = minimum_time_extension + 30;
 
-    //                 creatorPrizeAta: creatorAta,
-    //                 prizeEscrow: await createAta(splMint, auctionPda),
-    //                 prizeTokenProgram: TOKEN_PROGRAM_ID,
-    //                 associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-    //                 systemProgram: SystemProgram.programId,
-    //             })
-    //             .signers([creator, auction_admin])
-    //             .rpc();
+        // 4) Perform the update
+        await updateAuction(program, {
+            auctionId,
+            creator: auction_1_creator,  // fix as per your setup
+            auctionAdmin: auction_admin,
+            startTime: newStart,
+            endTime: newEnd,
+            startImmediately: false,
+            baseBid: newBaseBid,
+            minIncrement: newMinIncrement,
+            timeExtension: newTimeExtension,
+        });
 
-    //         throw new Error("Should have failed but succeeded!");
-    //     } catch (err) {
-    //         console.log("Expected NFT validation rejection:", err.error?.errorMessage);
-    //     }
-    // });
+        // 5) Read updated auction
+        const auctionAfter = await program.account.auction.fetch(auctionPda);
 
-    // it("Reject: startImmediately = false but start_time < now", async () => {
-    //     const creator = Keypair.generate();
-    //     await context.setAccount(creator.publicKey, {
-    //         lamports: 20_000_000_000,
-    //         owner: SystemProgram.programId,
-    //         executable: false,
-    //         data: Buffer.alloc(0),
-    //     });
+        console.log("\nAuction After Update:");
+        console.log({
+            auctionId: auctionAfter.auctionId,
+            startTime: Number(auctionAfter.startTime),
+            endTime: Number(auctionAfter.endTime),
+            baseBid: Number(auctionAfter.baseBid),
+            minIncrement: Number(auctionAfter.minIncrement),
+            timeExtension: auctionAfter.timeExtension,
+            highestBidAmount: Number(auctionAfter.highestBidAmount),
+            status: auctionAfter.status,
+            hasAnyBid: auctionAfter.hasAnyBid,
+        });
 
-    //     const { nftMint, creatorAta } = await setupPrizeNFT(creator);
+        // 6) Diagnostic logs to verify correctness
+        console.log("\nVerification Logs:");
+        console.log("StartTime updated correctly:", Number(auctionAfter.startTime) === newStart);
+        console.log("EndTime updated correctly:", Number(auctionAfter.endTime) === newEnd);
+        console.log("BaseBid updated correctly:", Number(auctionAfter.baseBid) === newBaseBid);
+        console.log("MinIncrement updated correctly:", Number(auctionAfter.minIncrement) === newMinIncrement);
+        console.log("TimeExtension updated correctly:", auctionAfter.timeExtension === newTimeExtension);
+        console.log("HighestBidAmount reset to baseBid:", Number(auctionAfter.highestBidAmount) === newBaseBid);
+    });
 
-    //     const now = await getCurrentTimestamp();
-    //     const startTime = now - 50;  // INVALID
-    //     const endTime = startTime + minimum_auction_period + 100;
+    it("Cancel Auction Successfully – returns NFT to creator & closes accounts", async () => {
+        // 1) Fetch config + determine auctionId
+        const cfg = await program.account.auctionConfig.fetch(auctionConfigPda());
+        const auctionId = cfg.auctionCount - 1;
+        const auctionPda = await deriveAuctionPda(program, auctionId);
 
-    //     const cfg = await program.account.auctionConfig.fetch(auctionConfigPda());
-    //     const auctionId = cfg.auctionCount;
-    //     const auctionPda = await buildAuctionPDAs(auctionId);
+        // 2) Fetch existing accounts
+        let auctionBefore = await program.account.auction.fetch(auctionPda);
+        const creatorPrizeAta = await createAta(auctionBefore.prizeMint, auction_1_creator.publicKey);
+        const prizeEscrow = await createAta(auctionBefore.prizeMint, auctionPda);
 
-    //     try {
-    //         await program.methods
-    //             .createAuction(
-    //                 new anchor.BN(startTime),
-    //                 new anchor.BN(endTime),
-    //                 false,            // do not force now
-    //                 true,
-    //                 new anchor.BN(1),
-    //                 new anchor.BN(10),
-    //                 minimum_time_extension
-    //             )
-    //             .accounts({
-    //                 auctionConfig: auctionConfigPda(),
-    //                 auction: auctionPda,
-    //                 creator: creator.publicKey,
-    //                 auctionAdmin: auction_admin.publicKey,
-    //                 prizeMint: nftMint,
-    //                 bidMint: nftMint,
-    //                 creatorPrizeAta: creatorAta,
-    //                 prizeEscrow: await createAta(nftMint, auctionPda),
-    //                 prizeTokenProgram: TOKEN_PROGRAM_ID,
-    //                 associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-    //                 systemProgram: SystemProgram.programId,
-    //             })
-    //             .signers([creator, auction_admin])
-    //             .rpc();
+        // 3) Check initial balances
+        const creatorNftBefore = await getTokenBalance(creatorPrizeAta);
+        const escrowNftBefore = await getTokenBalance(prizeEscrow);
+        const creatorSolBefore = await getSolBalance(auction_1_creator.publicKey);
+        const configSolBefore = await getSolBalance(auctionConfigPda());
 
-    //         throw new Error("Should have failed due to past start_time");
-    //     } catch (err) {
-    //         console.log("Expected past-start rejection:", err.error?.errorMessage);
-    //     }
-    // });
+        console.log("Creator NFT Before:", creatorNftBefore);
+        console.log("Escrow NFT Before:", escrowNftBefore);
+        console.log("Creator SOL Before:", creatorSolBefore);
+        console.log("Config SOL Before:", configSolBefore);
 
-    // it("Reject: min_increment = 0", async () => {
-    //     const creator = Keypair.generate();
-    //     const { nftMint, creatorAta } = await setupPrizeNFT(creator);
+        // const fake_prize_mint = await createNftMint();
 
-    //     await context.setAccount(creator.publicKey, {
-    //         lamports: 20_000_000_000,
-    //         owner: SystemProgram.programId,
-    //         executable: false,
-    //         data: Buffer.alloc(0),
-    //     });
+        // STEP 5: Cancel the Auction
+        await cancelAuction(program, {
+            auctionId,
+            creator: auction_1_creator,
+            auctionAdmin: auction_admin,
+            prizeMint: auctionBefore.prizeMint,
+            prizeEscrow,
+            creatorPrizeAta,
+        });
 
-    //     const now = await getCurrentTimestamp();
-    //     const startTime = now + 50;
-    //     const endTime = startTime + minimum_auction_period + 100;
+        console.log("--------- Auction cancelled successfully -------");
 
-    //     const cfg = await program.account.auctionConfig.fetch(auctionConfigPda());
-    //     const auctionId = cfg.auctionCount;
-    //     const auctionPda = await buildAuctionPDAs(auctionId);
+        // STEP 6: Verify final balances
+        const creatorNftAfter = await getTokenBalance(creatorPrizeAta);
+        let escrowNftAfter = 0;
+        try {
+            escrowNftAfter = await getTokenBalance(prizeEscrow);
+        } catch (_) {
+            escrowNftAfter = 0; // escrow closed
+        }
 
-    //     try {
-    //         await program.methods
-    //             .createAuction(
-    //                 new anchor.BN(startTime),
-    //                 new anchor.BN(endTime),
-    //                 false,
-    //                 true,
-    //                 new anchor.BN(1),
-    //                 new anchor.BN(0),   // INVALID
-    //                 minimum_time_extension
-    //             )
-    //             .accounts({
-    //                 auctionConfig: auctionConfigPda(),
-    //                 auction: auctionPda,
-    //                 creator: creator.publicKey,
-    //                 auctionAdmin: auction_admin.publicKey,
-    //                 prizeMint: nftMint,
-    //                 bidMint: nftMint,
-    //                 creatorPrizeAta: creatorAta,
-    //                 prizeEscrow: await createAta(nftMint, auctionPda),
-    //                 prizeTokenProgram: TOKEN_PROGRAM_ID,
-    //                 associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-    //                 systemProgram: SystemProgram.programId,
-    //             })
-    //             .signers([creator, auction_admin])
-    //             .rpc();
+        let auctionAccountExists = true;
+        try {
+            await program.account.auction.fetch(auctionPda);
+        } catch (_) {
+            auctionAccountExists = false; // closed
+        }
 
-    //         throw new Error("min_increment=0 should fail");
-    //     } catch (err) {
-    //         console.log("Expected min_increment=0 rejection:", err.error?.errorMessage);
-    //     }
-    // });
+        const creatorSolAfter = await getSolBalance(auction_1_creator.publicKey);
+        const configSolAfter = await getSolBalance(auctionConfigPda());
 
-    // it("Reject: time_extension less than minimum", async () => {
-    //     const creator = Keypair.generate();
-    //     const { nftMint, creatorAta } = await setupPrizeNFT(creator);
+        console.log("\n============== FINAL RESULTS ==============");
+        console.log("Creator NFT Before:", creatorNftBefore);
+        console.log("Creator NFT After:", creatorNftAfter);
+        console.log("NFT Returned:", creatorNftAfter - creatorNftBefore);
 
-    //     await context.setAccount(creator.publicKey, {
-    //         lamports: 20_000_000_000,
-    //         owner: SystemProgram.programId,
-    //         executable: false,
-    //         data: Buffer.alloc(0),
-    //     });
+        console.log("Escrow NFT Before:", escrowNftBefore);
+        console.log("Escrow NFT After:", escrowNftAfter);
+        console.log("Escrow Closed:", escrowNftAfter === 0);
 
-    //     const now = await getCurrentTimestamp();
-    //     const startTime = now + 100;
-    //     const endTime = startTime + minimum_auction_period + 150;
+        console.log("Auction Exists After:", auctionAccountExists);
 
-    //     const cfg = await program.account.auctionConfig.fetch(auctionConfigPda());
-    //     const auctionId = cfg.auctionCount;
-    //     const auctionPda = await buildAuctionPDAs(auctionId);
+        console.log("Creator SOL Before:", creatorSolBefore);
+        console.log("Creator SOL After:", creatorSolAfter);
+        console.log("Config SOL Before:", configSolBefore);
+        console.log("Config SOL After:", configSolAfter);
+        console.log("SOL Refund (Close Account Rent):", creatorSolAfter - creatorSolBefore);
 
-    //     try {
-    //         await program.methods
-    //             .createAuction(
-    //                 new anchor.BN(startTime),
-    //                 new anchor.BN(endTime),
-    //                 false,
-    //                 true,
-    //                 new anchor.BN(10),
-    //                 new anchor.BN(1),
-    //                 minimum_time_extension - 5  // INVALID
-    //             )
-    //             .accounts({
-    //                 auctionConfig: auctionConfigPda(),
-    //                 auction: auctionPda,
-    //                 creator: creator.publicKey,
-    //                 auctionAdmin: auction_admin.publicKey,
-    //                 prizeMint: nftMint,
-    //                 bidMint: nftMint,
-    //                 creatorPrizeAta: creatorAta,
-    //                 prizeEscrow: await createAta(nftMint, auctionPda),
-    //                 prizeTokenProgram: TOKEN_PROGRAM_ID,
-    //                 associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-    //                 systemProgram: SystemProgram.programId,
-    //             })
-    //             .signers([creator, auction_admin])
-    //             .rpc();
+        console.log("====================================================\n");
+    });
 
-    //         throw new Error("time_extension invalid range should fail");
-    //     } catch (err) {
-    //         console.log("Expected time extension rejection:", err.error?.errorMessage);
-    //     }
-    // });
+    it("Config owner claim the sol fees", async () => {
+        const cfgBefore = await getSolBalance(auctionConfigPda());
+        const receiverBefore = await getSolBalance(auction_1_creator.publicKey);
 
-    // it("Reject: wrong admin tries to create auction", async () => {
-    //     const creator = Keypair.generate();
-    //     const fakeAdmin = Keypair.generate();
+        console.log("Config PDA SOL Before:", cfgBefore);
+        console.log("Receiver SOL Before:", receiverBefore);
 
-    //     await context.setAccount(creator.publicKey, {
-    //         lamports: 20_000_000_000,
-    //         owner: SystemProgram.programId,
-    //         executable: false,
-    //         data: Buffer.alloc(0),
-    //     });
-    //     await context.setAccount(fakeAdmin.publicKey, {
-    //         lamports: 10_000_000_000,
-    //         owner: SystemProgram.programId,
-    //         executable: false,
-    //         data: Buffer.alloc(0),
-    //     });
+        const withdrawAmount = 99_000_000; // 0.1 < SOL
 
-    //     const { nftMint, creatorAta } = await setupPrizeNFT(creator);
+        console.log("\nWithdrawing:", withdrawAmount, "lamports");
 
-    //     const now = await getCurrentTimestamp();
-    //     const startTime = now + 20;
-    //     const endTime = startTime + minimum_auction_period + 100;
+        await program.methods
+            .withdrawSolFees(new anchor.BN(withdrawAmount))
+            .accounts({
+                auctionConfig: auctionConfigPda(),
+                owner: auction_owner.publicKey,
+                receiver: auction_1_creator.publicKey,
+                systemProgram: anchor.web3.SystemProgram.programId,
+            })
+            .signers([auction_owner])
+            .rpc();
 
-    //     const cfg = await program.account.auctionConfig.fetch(auctionConfigPda());
-    //     const auctionId = cfg.auctionCount;
-    //     const auctionPda = await buildAuctionPDAs(auctionId);
+        const cfgAfter = await getSolBalance(auctionConfigPda());
+        const receiverAfter = await getSolBalance(auction_1_creator.publicKey);
 
-    //     try {
-    //         await program.methods
-    //             .createAuction(
-    //                 new anchor.BN(startTime),
-    //                 new anchor.BN(endTime),
-    //                 false,
-    //                 true,
-    //                 new anchor.BN(10),
-    //                 new anchor.BN(20),
-    //                 minimum_time_extension
-    //             )
-    //             .accounts({
-    //                 auctionConfig: auctionConfigPda(),
-    //                 auction: auctionPda,
-    //                 creator: creator.publicKey,
-    //                 auctionAdmin: fakeAdmin.publicKey, // WRONG admin
-    //                 prizeMint: nftMint,
-    //                 bidMint: nftMint,
-    //                 creatorPrizeAta: creatorAta,
-    //                 prizeEscrow: await createAta(nftMint, auctionPda),
-    //                 prizeTokenProgram: TOKEN_PROGRAM_ID,
-    //                 associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-    //                 systemProgram: SystemProgram.programId,
-    //             })
-    //             .signers([creator, fakeAdmin])
-    //             .rpc();
+        console.log("\n================= FINAL BALANCES =================");
+        console.log("Config PDA SOL Before:", cfgBefore);
+        console.log("Config PDA SOL After :", cfgAfter);
+        console.log("Config PDA Decrease  :", cfgBefore - cfgAfter);
 
-    //         throw new Error("Wrong admin should fail");
-    //     } catch (err) {
-    //         console.log("Expected wrong-admin rejection:", err.error?.errorMessage);
-    //     }
-    // });
-
-    // it("Create Auction With startImmediately=true", async () => {
-    //     const creator = Keypair.generate();
-    //     const { nftMint, creatorAta } = await setupPrizeNFT(creator);
-
-    //     await context.setAccount(creator.publicKey, {
-    //         lamports: 20_000_000_000,
-    //         owner: SystemProgram.programId,
-    //         executable: false,
-    //         data: Buffer.alloc(0),
-    //     });
-
-    //     const now = await getCurrentTimestamp();
-    //     const startTime = now + 999999; // ignored
-    //     const endTime = now + minimum_auction_period + 200;
-
-    //     const cfg = await program.account.auctionConfig.fetch(auctionConfigPda());
-    //     const auctionId = cfg.auctionCount;
-    //     const auctionPda = await buildAuctionPDAs(auctionId);
-
-    //     await program.methods
-    //         .createAuction(
-    //             new anchor.BN(startTime),
-    //             new anchor.BN(endTime),
-    //             true,  // start immediately
-    //             true,
-    //             new anchor.BN(1),
-    //             new anchor.BN(10),
-    //             minimum_time_extension
-    //         )
-    //         .accounts({
-    //             auctionConfig: auctionConfigPda(),
-    //             auction: auctionPda,
-    //             creator: creator.publicKey,
-    //             auctionAdmin: auction_admin.publicKey,
-    //             prizeMint: nftMint,
-    //             bidMint: nftMint,
-    //             creatorPrizeAta: creatorAta,
-    //             prizeEscrow: await createAta(nftMint, auctionPda),
-    //             prizeTokenProgram: TOKEN_PROGRAM_ID,
-    //             associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-    //             systemProgram: SystemProgram.programId,
-    //         })
-    //         .signers([creator, auction_admin])
-    //         .rpc();
-
-    //     const auction = await program.account.auction.fetch(auctionPda);
-
-    //     console.log("Auction After startImmediately:", {
-    //         status: auction.status,
-    //         start_time: auction.startTime,
-    //     });
-    // });
+        console.log("Receiver SOL Before  :", receiverBefore);
+        console.log("Receiver SOL After   :", receiverAfter);
+        console.log("Receiver SOL Gained  :", receiverAfter - receiverBefore);
+    });
 });
