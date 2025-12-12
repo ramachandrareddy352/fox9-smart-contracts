@@ -77,22 +77,12 @@ pub fn end_gumball(ctx: Context<EndGumball>, gumball_id: u32) -> Result<()> {
     match gumball.ticket_mint {
         None => {
             // Transfer fee to config
-            transfer_sol_with_seeds(
-                &gumball_ai,
-                &config.to_account_info(),
-                &ctx.accounts.system_program,
-                signer_seeds,
-                fee_amount,
-            )?;
+            **gumball_ai.try_borrow_mut_lamports()? -= fee_amount;
+            **config.to_account_info().try_borrow_mut_lamports()? += fee_amount;
 
             // Transfer remaining to creator
-            transfer_sol_with_seeds(
-                &gumball_ai,
-                &ctx.accounts.creator,
-                &ctx.accounts.system_program,
-                signer_seeds,
-                creator_amount,
-            )?;
+            **gumball_ai.try_borrow_mut_lamports()? -= creator_amount;
+            **ctx.accounts.creator.try_borrow_mut_lamports()? += creator_amount;
         }
         // Case B — SPL mode
         Some(stored_mint) => {

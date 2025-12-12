@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 use crate::constants::*;
 use crate::errors::*;
-use crate::helpers::{transfer_sol_with_seeds, transfer_tokens_with_seeds};
+use crate::helpers::{transfer_tokens_with_seeds};
 use crate::states::*;
 use crate::utils::{get_pct_amount, has_duplicate_pubkeys, is_paused};
 

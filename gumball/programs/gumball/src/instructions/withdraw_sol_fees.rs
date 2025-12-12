@@ -1,5 +1,4 @@
 use crate::errors::{ConfigStateErrors, TransferErrors};
-use crate::helpers::transfer_sol_with_seeds;
 use crate::states::GumballConfig;
 use anchor_lang::prelude::*;
 use anchor_lang::system_program::System;
@@ -23,16 +22,9 @@ pub fn withdraw_sol_fees(ctx: Context<WithdrawSolFees>, amount: u64) -> Result<(
         TransferErrors::InsufficientSolBalance
     );
 
-    let signer_seeds: &[&[&[u8]]] = &[&[b"gumball", &[config.config_bump]]];
-
-    // Transfer using your helper
-    transfer_sol_with_seeds(
-        &pda_ai,
-        &ctx.accounts.receiver,
-        &ctx.accounts.system_program,
-        signer_seeds,
-        amount,
-    )?;
+    // Transfer directely
+    **pda_ai.try_borrow_mut_lamports()? -= amount;
+    **ctx.accounts.receiver.try_borrow_mut_lamports()? += amount;
 
     emit!(FeesWithdrawn {
         amount,
