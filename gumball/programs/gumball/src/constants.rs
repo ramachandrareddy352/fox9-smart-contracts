@@ -7,7 +7,7 @@ pub const MINIMUM_TICKETS: u16 = 3; // minimum tickets have to set in a GUMBALL
 pub const MAXIMUM_TICKETS: u16 = 1_000; // number of prizes == number of tickets
 
 pub const CREATE_GUMBALL_PAUSE: u8 = 0;
-pub const ACTIVATE_GUMBALL_PAUSE: u8 = 1;
+pub const ACTIVATE_GUMBALL_PAUSE: u8 = 1; 
 pub const ADD_PRIZE_IN_GUMBALL_PAUSE: u8 = 2;
 pub const CANCEL_GUMBALL_PAUSE: u8 = 3;
 pub const CLAIM_PRIZES_BACK_PAUSE: u8 = 4;

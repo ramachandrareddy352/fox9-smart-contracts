@@ -39,7 +39,7 @@ pub struct Auction {
     pub base_bid: u64,
     pub min_increment: u64,     // min bidding increment
     pub time_extension: u32, 
-
+ 
     pub highest_bid_amount: u64,
     pub highest_bidder: Pubkey,
     pub has_any_bid: bool,

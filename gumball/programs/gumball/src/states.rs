@@ -35,7 +35,7 @@ pub struct GumballMachine {
 pub struct Prize {
     pub gumball_id: u32,
     pub prize_index: u16,
-    pub if_prize_nft: bool,
+    pub if_prize_nft: bool, 
     pub mint: Pubkey,
     pub total_amount: u64,
     pub prize_amount: u64,
@@ -43,11 +43,12 @@ pub struct Prize {
 }
 
 #[derive(InitSpace, AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 pub enum GumballState {
-    None,
-    Initialized,
-    Active,
-    Cancelled, // when creator cancel the gumball
-    CompletedSuccessfully,
-    CompletedFailed,
+    None = 0,
+    Initialized = 1,
+    Active = 2,
+    Cancelled = 3,  // when creator cancel the auction
+    CompletedSuccessfully = 4,
+    CompletedFailed = 5,
 }
