@@ -42,17 +42,17 @@ pub fn update_gumball_time(
         gumball.status == GumballState::Initialized,
         GumballStateErrors::InvalidGumballState
     );
-
-    if start_gumball {
-        new_start_time = now;
-    }
-
     // Must be before start time
     require_gt!(
         gumball.start_time,
         now,
-        GumballStateErrors::StartTimeNotReached
+        GumballStateErrors::StartTimeAlreadyReached
     );
+
+    if start_gumball {
+        new_start_time = now;
+        gumball.status = GumballState::Active;
+    }
 
     // New start must be >= now
     require_gte!(new_start_time, now, GumballStateErrors::StartTimeInPast);
@@ -117,6 +117,10 @@ pub fn update_gumball_data(
     require!(
         new_total_tickets >= gumball.prizes_added,
         GumballStateErrors::PrizesExceedTickets
+    );
+    require!(
+        MINIMUM_TICKETS <= new_total_tickets && new_total_tickets <= MAXIMUM_TICKETS,
+        GumballStateErrors::InvalidTotalTickets
     );
 
     // update states

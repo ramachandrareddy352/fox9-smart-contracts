@@ -5,7 +5,7 @@ use crate::states::GumballConfig;
 pub fn initialize_gumball_config(
     ctx: Context<InitializeGumballConfig>,
     gumball_owner: Pubkey,
-    gumball_admin: Pubkey,
+    gumball_admin: Pubkey, 
     creation_fee_lamports: u64,
     ticket_fee_bps: u16,         // 100 = 1%
     minimum_gumball_period: u32, // must be > 0

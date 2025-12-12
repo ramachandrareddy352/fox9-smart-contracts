@@ -22,6 +22,9 @@ pub enum GumballStateErrors {
 
     #[msg("End time is not reached")]
     EndTimeNotReached,
+    
+    #[msg("Start time already reached")]
+    StartTimeAlreadyReached,
 
     #[msg("Start time exceed end time")]
     StartTimeExceedEndTime,

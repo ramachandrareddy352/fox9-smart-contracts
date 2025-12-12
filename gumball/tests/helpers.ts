@@ -10,7 +10,7 @@ import {
     AccountLayout,
     ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
-import { getProvider, gumballConfigPda } from "./values";
+import { getProgram, getProvider, gumballConfigPda, gumballPda, gumballPrizePda } from "./values";
 import { Clock } from "solana-bankrun";
 import { Gumball } from "../target/types/gumball";
 
@@ -138,3 +138,282 @@ export async function warpForward(seconds: number) {
     );
 }
 
+export async function withdrawSolFees(
+    gumballOwner: Keypair,
+    receiver: PublicKey,
+    amount: number
+) {
+    await getProgram().methods
+        .withdrawSolFees(new anchor.BN(amount))
+        .accounts({
+            gumballConfig: gumballConfigPda(),
+            owner: gumballOwner.publicKey,
+            receiver,
+            systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([gumballOwner])
+        .rpc();
+}
+
+export async function initializeGumballConfig(
+    payer: Keypair,
+    gumballOwner: PublicKey,
+    gumballAdmin: PublicKey,
+    creationFeeLamports: number,
+    ticketFeeBps: number,
+    minimumGumballPeriod: number,
+    maximumGumballPeriod: number
+) {
+    await getProgram().methods
+        .initializeGumballConfig(
+            gumballOwner,
+            gumballAdmin,
+            new anchor.BN(creationFeeLamports),
+            ticketFeeBps,
+            minimumGumballPeriod,
+            maximumGumballPeriod
+        )
+        .accounts({
+            gumballConfig: gumballConfigPda(),
+            payer: payer.publicKey,
+            systemProgram: SystemProgram.programId,
+        })
+        .signers([payer])
+        .rpc();
+}
+
+export async function createGumball(
+    args: {
+        startTime: number | anchor.BN;
+        endTime: number | anchor.BN;
+        totalTickets: number;
+        ticketPrice: number | anchor.BN;
+        isTicketSol: boolean;
+        startGumball: boolean;
+    },
+    accounts: {
+        gumballPda: PublicKey;
+        creator: Keypair;
+        gumballAdmin: Keypair;
+        ticketMint: PublicKey; // InterfaceAccount passed on-chain; in tests supply mint pubkey (or dummy)
+    }
+) {
+    await getProgram().methods
+        .createGumball(
+            new anchor.BN(args.startTime),
+            new anchor.BN(args.endTime),
+            args.totalTickets,
+            new anchor.BN(args.ticketPrice),
+            args.isTicketSol,
+            args.startGumball
+        )
+        .accounts({
+            gumballConfig: gumballConfigPda(),
+            gumball: accounts.gumballPda,
+            creator: accounts.creator.publicKey,
+            gumballAdmin: accounts.gumballAdmin.publicKey,
+            ticketMint: accounts.ticketMint,
+            systemProgram: SystemProgram.programId,
+        })
+        .signers([accounts.creator, accounts.gumballAdmin])
+        .rpc();
+}
+
+export async function activateGumball(
+    gumballPdaAddr: PublicKey,
+    gumballId: number,
+    gumballAdmin: Keypair
+) {
+    await getProgram().methods
+        .activateGumball(gumballId)
+        .accounts({
+            gumballConfig: gumballConfigPda(),
+            gumball: gumballPdaAddr,
+            gumballAdmin: gumballAdmin.publicKey,
+        })
+        .signers([gumballAdmin])
+        .rpc();
+}
+
+export async function cancelGumball(
+    gumballPdaAddr: PublicKey,
+    gumballId: number,
+    creator: Keypair,
+    gumballAdmin: Keypair
+) {
+    await getProgram().methods
+        .cancelGumball(gumballId)
+        .accounts({
+            gumballConfig: gumballConfigPda(),
+            gumball: gumballPdaAddr,
+            creator: creator.publicKey,
+            gumballAdmin: gumballAdmin.publicKey,
+        })
+        .signers([creator, gumballAdmin])
+        .rpc();
+}
+
+export async function endGumball(
+    gumballPdaAddr: PublicKey,
+    gumballId: number,
+    gumballAdmin: Keypair,
+    creator: Keypair,
+    ticketMint: PublicKey,
+    ticketEscrow: PublicKey,
+    ticketFeeEscrowAta: PublicKey,
+    creatorTicketAta: PublicKey
+) {
+    await getProgram().methods
+        .endGumball(gumballId)
+        .accounts({
+            gumballConfig: gumballConfigPda(),
+            gumball: gumballPdaAddr,
+            gumballAdmin: gumballAdmin.publicKey,
+            creator: creator.publicKey,
+            ticketMint,
+            ticketEscrow,
+            ticketFeeEscrowAta,
+            creatorTicketAta,
+            ticketTokenProgram: TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+        })
+        .signers([gumballAdmin])
+        .rpc();
+}
+
+export async function addPrize(
+    gumballPdaAddr: PublicKey,
+    gumballId: number,
+    prizeIndex: number,
+    prizeAmount: number,
+    quantity: number,
+    creator: Keypair,
+    gumballAdmin: Keypair,
+    prizeMint: PublicKey,
+    prizeEscrow: PublicKey,
+    creatorPrizeAta: PublicKey
+) {
+    await getProgram().methods
+        .addPrize(gumballId, prizeIndex, new anchor.BN(prizeAmount), quantity)
+        .accounts({
+            gumballConfig: gumballConfigPda(),
+            gumball: gumballPdaAddr,
+            prize: gumballPrizePda(gumballId, prizeIndex),
+            creator: creator.publicKey,
+            gumballAdmin: gumballAdmin.publicKey,
+            prizeMint,
+            prizeEscrow,
+            creatorPrizeAta,
+            prizeTokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+        })
+        .signers([creator])
+        .rpc();
+}
+
+export async function claimPrizeBack(
+    gumballPdaAddr: PublicKey,
+    gumballId: number,
+    prizeIndex: number,
+    creator: Keypair,
+    gumballAdmin: Keypair,
+    prizeMint: PublicKey,
+    prizeEscrow: PublicKey,
+    creatorPrizeAta: PublicKey
+) {
+    await getProgram().methods
+        .claimPrizeBack(gumballId, prizeIndex)
+        .accounts({
+            gumballConfig: gumballConfigPda(),
+            gumball: gumballPdaAddr,
+            prize: gumballPrizePda(gumballId, prizeIndex),
+            creator: creator.publicKey,
+            gumballAdmin: gumballAdmin.publicKey,
+            prizeMint,
+            prizeEscrow,
+            creatorPrizeAta,
+            prizeTokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+        })
+        .signers([creator])
+        .rpc();
+}
+
+export async function spinGumball(
+    gumballPdaAddr: PublicKey,
+    gumballId: number,
+    prizeIndex: number,
+    spinner: Keypair,
+    gumballAdmin: Keypair,
+    prizeMint: PublicKey,
+    prizeEscrow: PublicKey,
+    spinnerPrizeAta: PublicKey,
+    ticketMint: PublicKey,
+    ticketEscrow: PublicKey,
+    spinnerTicketAta: PublicKey
+) {
+    await getProgram().methods
+        .spinGumball(gumballId, prizeIndex)
+        .accounts({
+            gumballConfig: gumballConfigPda(),
+            gumball: gumballPdaAddr,
+            prize: gumballPrizePda(gumballId, prizeIndex),
+            spinner: spinner.publicKey,
+            gumballAdmin: gumballAdmin.publicKey,
+            prizeMint,
+            ticketMint,
+            prizeEscrow,
+            spinnerPrizeAta,
+            ticketEscrow,
+            spinnerTicketAta,
+            prizeTokenProgram: TOKEN_PROGRAM_ID,
+            ticketTokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+        })
+        .signers([spinner, gumballAdmin])
+        .rpc();
+}
+
+export async function updateGumballTime(
+    gumballPdaAddr: PublicKey,
+    gumballId: number,
+    newStartTime: number,
+    newEndTime: number,
+    startGumball: boolean,
+    creator: Keypair,
+    gumballAdmin: Keypair
+) {
+    await getProgram().methods
+        .updateGumballTime(gumballId, new anchor.BN(newStartTime), new anchor.BN(newEndTime), startGumball)
+        .accounts({
+            gumballConfig: gumballConfigPda(),
+            gumball: gumballPdaAddr,
+            creator: creator.publicKey,
+            gumballAdmin: gumballAdmin.publicKey,
+        })
+        .signers([creator, gumballAdmin])
+        .rpc();
+}
+
+export async function updateGumballData(
+    gumballPdaAddr: PublicKey,
+    gumballId: number,
+    newTicketPrice: number,
+    newTotalTickets: number,
+    creator: Keypair,
+    gumballAdmin: Keypair
+) {
+    await getProgram().methods
+        .updateGumballData(gumballId, new anchor.BN(newTicketPrice), newTotalTickets)
+        .accounts({
+            gumballConfig: gumballConfigPda(),
+            gumball: gumballPdaAddr,
+            creator: creator.publicKey,
+            gumballAdmin: gumballAdmin.publicKey,
+        })
+        .signers([creator, gumballAdmin])
+        .rpc();
+}

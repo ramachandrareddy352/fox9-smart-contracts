@@ -73,22 +73,7 @@ pub fn create_gumball(
 
     // Ticket escrow (only if SPL tickets)
     if !is_ticket_sol {
-        let ticket_mint = &ctx.accounts.ticket_mint;
-        let ticket_mint_key = ticket_mint.key();
-
-        let ticket_escrow = &ctx.accounts.ticket_escrow;
-        require_keys_eq!(
-            ticket_escrow.owner,
-            gumball.key(),
-            KeysMismatchErrors::InvalidTicketEscrowOwner
-        );
-        require_keys_eq!(
-            ticket_escrow.mint,
-            ticket_mint_key,
-            KeysMismatchErrors::InvalidTicketMint
-        );
-
-        gumball.ticket_mint = Some(ticket_mint_key);
+        gumball.ticket_mint = Some(ctx.accounts.ticket_mint.key());
     } else {
         gumball.ticket_mint = None;
     }
@@ -146,10 +131,6 @@ pub struct CreateGumball<'info> {
 
     // Mint used for tickets (must be a valid SPL mint if `is_ticket_sol == false`)
     pub ticket_mint: InterfaceAccount<'info, Mint>,
-
-    // Ticket escrow ATA (create ATA to store the tickets amount from the buyers and owner of the ATA is the gumball account, if ticket mint != sol)
-    #[account(mut)]
-    pub ticket_escrow: InterfaceAccount<'info, TokenAccount>,
 
     pub system_program: Program<'info, System>,
 }
