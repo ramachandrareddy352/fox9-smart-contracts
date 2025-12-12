@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{close_account, CloseAccount};
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
+
 use crate::constants::{COMPLETE_AUCTION_PAUSE, FEE_MANTISSA};
 use crate::errors::{AuctionStateErrors, ConfigStateErrors, KeysMismatchErrors};
 use crate::helpers::*;
@@ -35,7 +36,7 @@ pub fn complete_auction(ctx: Context<CompleteAuction>, auction_id: u32) -> Resul
         auction.status == AuctionState::Active,
         AuctionStateErrors::AuctionAlreadyCompleted
     );
-    require_gt!(now, auction.end_time, AuctionStateErrors::AuctionNotStarted);
+    require_gt!(now, auction.end_time, AuctionStateErrors::EndTimeNotReached);
 
     let seeds: &[&[u8]] = &[
         b"auction",
@@ -79,13 +80,7 @@ pub fn complete_auction(ctx: Context<CompleteAuction>, auction_id: u32) -> Resul
     let creator_claimable_amount = final_price
         .checked_sub(fee_amount)
         .ok_or(AuctionStateErrors::Overflow)?;
-    let creator_dust_amount = ctx
-        .accounts
-        .bid_escrow
-        .amount
-        .checked_sub(fee_amount)
-        .ok_or(AuctionStateErrors::Overflow)?;
-    let creator_amount = creator_claimable_amount.max(creator_dust_amount);
+    let mut creator_amount = 0;
 
     let prize_mint_key = auction.prize_mint;
 
@@ -94,6 +89,12 @@ pub fn complete_auction(ctx: Context<CompleteAuction>, auction_id: u32) -> Resul
         ctx.accounts.prize_mint.key() == prize_mint_key
             && ctx.accounts.winner_prize_ata.mint == prize_mint_key,
         KeysMismatchErrors::InvalidPrizeMint
+    );
+
+    require_keys_eq!(
+        auction.highest_bidder,
+        ctx.accounts.winner.key(),
+        KeysMismatchErrors::InvalidHighestBidder
     );
 
     require_keys_eq!(
@@ -112,26 +113,39 @@ pub fn complete_auction(ctx: Context<CompleteAuction>, auction_id: u32) -> Resul
         1u64,
     )?;
 
+    let cpi_ctx = CpiContext::new_with_signer(
+        ctx.accounts.prize_token_program.to_account_info(), // token_program
+        CloseAccount {
+            account: ctx.accounts.prize_escrow.to_account_info(),
+            destination: ctx.accounts.creator.to_account_info(),
+            authority: auction.to_account_info(),
+        },
+        signer_seeds,
+    );
+    close_account(cpi_ctx)?;
+
     auction.status = AuctionState::CompletedSuccessfully;
 
     // Distribute funds: depends on SOL or SPL bidding
     match auction.bid_mint {
         None => {
-            // SOL: auction PDA holds lamports equal to final_price
-            // Transfer fee to config
-            transfer_sol_with_seeds(
-                &auction.to_account_info(),
-                &ctx.accounts.auction_config.to_account_info(),
-                fee_amount,
-            )?;
-            // Transfer creator amount to creator
-            transfer_sol_with_seeds(
-                &auction.to_account_info(),
-                &ctx.accounts.creator,
-                creator_amount,
-            )?;
+            creator_amount = creator_claimable_amount;
+
+            **auction.to_account_info().try_borrow_mut_lamports()? -= fee_amount;
+            **ctx.accounts.auction_config.to_account_info().try_borrow_mut_lamports()? += fee_amount;
+            
+            **auction.to_account_info().try_borrow_mut_lamports()? -= creator_claimable_amount;
+            **ctx.accounts.creator.try_borrow_mut_lamports()? += creator_claimable_amount;
         }
         Some(stored_mint) => {
+            let creator_dust_amount = ctx
+                .accounts
+                .bid_escrow
+                .amount
+                .checked_sub(fee_amount)
+                .ok_or(AuctionStateErrors::Overflow)?;
+            creator_amount = creator_claimable_amount.max(creator_dust_amount);
+
             // SPL: bid_escrow holds the funds; fee_treasury ATA (owned by config PDA) receives fee
             // validate provided accounts
             require!(
@@ -189,17 +203,6 @@ pub fn complete_auction(ctx: Context<CompleteAuction>, auction_id: u32) -> Resul
         }
     }
 
-    let cpi_ctx = CpiContext::new_with_signer(
-        ctx.accounts.prize_token_program.to_account_info(), // token_program
-        CloseAccount {
-            account: ctx.accounts.prize_escrow.to_account_info(),
-            destination: ctx.accounts.creator.to_account_info(),
-            authority: auction.to_account_info(),
-        },
-        signer_seeds,
-    );
-    close_account(cpi_ctx)?;
-
     emit!(AuctionCompleted {
         auction_id: auction_id,
         winner: Some(auction.highest_bidder),
@@ -216,6 +219,7 @@ pub fn complete_auction(ctx: Context<CompleteAuction>, auction_id: u32) -> Resul
 #[instruction(auction_id: u32)]
 pub struct CompleteAuction<'info> {
     #[account(
+        mut,
         seeds = [b"auction"], 
         bump = auction_config.config_bump, 
         constraint = auction_config.auction_admin == auction_admin.key() @ConfigStateErrors::InvalidAuctionAdmin
@@ -240,6 +244,7 @@ pub struct CompleteAuction<'info> {
     )]
     pub creator: AccountInfo<'info>,
 
+    /// audit: there is no check for winner and hisghest bidder
     #[account(mut)]
     pub winner: AccountInfo<'info>,
 

@@ -392,27 +392,20 @@ export async function completeAuction(
             auctionConfig: auctionConfigPda(),
             auction: auctionPda,
             auctionAdmin: params.auctionAdmin.publicKey,
-
             creator: params.creator,
             winner: params.winner,
-
             prizeMint: params.prizeMint,
             bidMint: params.bidMint,
-
             prizeEscrow: params.prizeEscrow,
             bidEscrow: params.bidEscrow,
-
-            creator_prize_ata: params.creatorPrizeAta,
-            winner_prize_ata: params.winnerPrizeAta,
-
-            bid_fee_treasury_ata: params.bidFeeTreasuryAta,
-            creator_bid_ata: params.creatorBidAta,
-
-            prize_token_program: TOKEN_PROGRAM_ID,
-            bid_token_program: TOKEN_PROGRAM_ID,
-
-            associated_token_program: ASSOCIATED_TOKEN_PROGRAM_ID,
-            system_program: SystemProgram.programId,
+            creatorPrizeAta: params.creatorPrizeAta,
+            winnerPrizeAta: params.winnerPrizeAta,
+            bidFeeTreasuryAta: params.bidFeeTreasuryAta,
+            creatorBidAta: params.creatorBidAta,
+            prizeTokenProgram: TOKEN_PROGRAM_ID,
+            bidTokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
         })
         .signers([params.auctionAdmin])
         .rpc();

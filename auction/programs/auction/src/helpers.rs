@@ -69,23 +69,6 @@ pub fn transfer_tokens<'info>(
     ).map_err(|_| TransferErrors::TokenTransferFailed.into())
 }
 
-// Transfer SOL using PDA seeds
-pub fn transfer_sol_with_seeds<'info>(
-    from: &AccountInfo<'info>,
-    to: &AccountInfo<'info>,
-    amount: u64,
-) -> Result<()> {
-    require!(
-        from.lamports() >= amount,
-        TransferErrors::InsufficientSolBalance
-    );
-
-    **from.try_borrow_mut_lamports()? -= amount;
-    **to.try_borrow_mut_lamports()? += amount;
-
-    Ok(())
-}
-
 // Transfer SOL from normal signer
 pub fn transfer_sol<'info>(
     from: &Signer<'info>,

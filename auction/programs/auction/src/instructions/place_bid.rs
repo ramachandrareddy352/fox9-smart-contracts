@@ -119,12 +119,9 @@ pub fn place_bid(ctx: Context<PlaceBid>, _auction_id: u32, bid_amount: u64) -> R
                     auction.highest_bidder,
                     KeysMismatchErrors::InvalidPreviousBidOwner
                 );
-
-                transfer_sol_with_seeds(
-                    &auction.to_account_info(),
-                    prev_account,
-                    refunded_amount,
-                )?;
+                
+                **auction.to_account_info().try_borrow_mut_lamports()? -= refunded_amount;
+                **prev_account.try_borrow_mut_lamports()? += refunded_amount;
             }
             Some(stored_mint) => {
                 // SPL refund: transfer from bid_escrow back to prev_bidder_ata using auction PDA signer
@@ -156,10 +153,7 @@ pub fn place_bid(ctx: Context<PlaceBid>, _auction_id: u32, bid_amount: u64) -> R
     auction.highest_bid_amount = bid_amount;
     auction.highest_bidder = bidder.key();
     auction.has_any_bid = true;
-    auction.end_time = auction
-        .end_time
-        .checked_add(auction.time_extension as i64)
-        .ok_or(AuctionStateErrors::Overflow)?;
+    auction.end_time = std::cmp::max(auction.end_time, now + auction.time_extension as i64);
 
     emit!(BidPlaced {
         auction_id: auction.auction_id,

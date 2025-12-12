@@ -8,6 +8,9 @@ pub enum AuctionStateErrors {
     #[msg("Invalid Auction Creator")]
     InvalidCreator,
 
+    #[msg("End time not reached")]
+    EndTimeNotReached,
+
     #[msg("Particular Function is paused")]
     FunctionPaused,
 
@@ -92,6 +95,9 @@ pub enum KeysMismatchErrors {
 
     #[msg("Invalid previous bid owner")]
     InvalidPreviousBidOwner,
+
+    #[msg("Invalid highest bidder")]
+    InvalidHighestBidder
 }
 
 #[error_code]

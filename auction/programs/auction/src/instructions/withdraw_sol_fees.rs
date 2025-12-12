@@ -1,6 +1,5 @@
 use anchor_lang::prelude::*;
 use crate::errors::{ConfigStateErrors, TransferErrors};
-use crate::helpers::transfer_sol_with_seeds;
 use crate::states::AuctionConfig;
 
 #[event]
@@ -22,11 +21,8 @@ pub fn withdraw_sol_fees(ctx: Context<WithdrawSolFees>, amount: u64) -> Result<(
         TransferErrors::InsufficientSolBalance
     );
 
-    transfer_sol_with_seeds(
-        &pda_ai,
-        &ctx.accounts.receiver,
-        amount,
-    )?;
+    **pda_ai.try_borrow_mut_lamports()? -= amount;
+    **ctx.accounts.receiver.try_borrow_mut_lamports()? += amount;
 
     emit!(FeesWithdrawn {
         amount,
