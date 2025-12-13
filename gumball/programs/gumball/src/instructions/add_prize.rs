@@ -218,7 +218,7 @@ pub struct AddPrize<'info> {
     pub creator_prize_ata: InterfaceAccount<'info, TokenAccount>,
 
     pub prize_token_program: Interface<'info, TokenInterface>,
-
+ 
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }

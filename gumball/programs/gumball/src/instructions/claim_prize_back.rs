@@ -40,7 +40,7 @@ pub fn claim_prize_back(
     let now = Clock::get()?.unix_timestamp;
 
     // Mutable accounts
-    let gumball = &mut ctx.accounts.gumball;
+    let gumball = &ctx.accounts.gumball;
     let prize = &mut ctx.accounts.prize;
     let creator = &ctx.accounts.creator;
 
@@ -61,28 +61,30 @@ pub fn claim_prize_back(
 
     let claimable_amount = ctx.accounts.prize_escrow.amount;
 
-    // Ensure there is something to claim
-    require_gt!(
-        claimable_amount,
-        0u64,
-        GumballStateErrors::InvalidPrizeQuantity
-    );
+    // Ensure there is something to claim, if theer are no prizes then we close account and send rent to creator
+    // require_gt!(
+    //     claimable_amount,
+    //     0u64,
+    //     GumballStateErrors::InvalidPrizeQuantity
+    // );
 
-    // Build signer seeds for gumball PDA (authority over prize_escrow ATA)
     let gumball_id_bytes = gumball.gumball_id.to_le_bytes();
     let seeds: &[&[u8]] = &[b"gumball", &gumball_id_bytes, &[gumball.gumball_bump]];
     let signer_seeds: &[&[&[u8]]] = &[seeds];
 
-    // Transfer tokens from prize_escrow -> creator_prize_ata using gumball PDA as signer
-    transfer_tokens_with_seeds(
-        &ctx.accounts.prize_escrow,
-        &ctx.accounts.creator_prize_ata,
-        &gumball_ai,
-        &ctx.accounts.prize_token_program,
-        &ctx.accounts.prize_mint,
-        signer_seeds,
-        claimable_amount,
-    )?;
+    // Build signer seeds for gumball PDA (authority over prize_escrow ATA)
+    if claimable_amount > 0 {
+        // Transfer tokens from prize_escrow -> creator_prize_ata using gumball PDA as signer
+        transfer_tokens_with_seeds(
+            &ctx.accounts.prize_escrow,
+            &ctx.accounts.creator_prize_ata,
+            &gumball_ai,
+            &ctx.accounts.prize_token_program,
+            &ctx.accounts.prize_mint,
+            signer_seeds,
+            claimable_amount,
+        )?;
+    }
 
     // Set remaining to zero
     prize.quantity = 0;

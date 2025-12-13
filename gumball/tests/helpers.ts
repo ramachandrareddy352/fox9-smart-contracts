@@ -87,13 +87,11 @@ export async function transferTokens(
 export async function buildCreateGumballAccounts(
     gumballPda: PublicKey,
     creator: Keypair,
-    ticketMint: PublicKey,
     prizeMint: PublicKey
 ) {
     const creatorPrizeAta = await createAta(prizeMint, creator.publicKey);
     const prizeEscrow = await createAta(prizeMint, gumballPda);
-    const ticketEscrow = await createAta(ticketMint, gumballPda);
-    return { ticketEscrow, prizeEscrow, creatorPrizeAta };
+    return { prizeEscrow, creatorPrizeAta };
 }
 
 // === UTILS ===
@@ -257,7 +255,7 @@ export async function endGumball(
     gumballPdaAddr: PublicKey,
     gumballId: number,
     gumballAdmin: Keypair,
-    creator: Keypair,
+    creator: PublicKey,
     ticketMint: PublicKey,
     ticketEscrow: PublicKey,
     ticketFeeEscrowAta: PublicKey,
@@ -269,7 +267,7 @@ export async function endGumball(
             gumballConfig: gumballConfigPda(),
             gumball: gumballPdaAddr,
             gumballAdmin: gumballAdmin.publicKey,
-            creator: creator.publicKey,
+            creator: creator,
             ticketMint,
             ticketEscrow,
             ticketFeeEscrowAta,
@@ -293,7 +291,7 @@ export async function addPrize(
     prizeEscrow: PublicKey,
     creatorPrizeAta: PublicKey
 ) {
-    await getProgram().methods
+    const tx = await getProgram().methods
         .addPrize(gumballId, prizeIndex, new anchor.BN(prizeAmount), quantity)
         .accounts({
             gumballConfig: gumballConfigPda(),
@@ -308,9 +306,15 @@ export async function addPrize(
             associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
         })
-        .signers([creator])
-        .rpc();
+        .signers([creator, gumballAdmin])
+        .transaction();
+
+    // IMPORTANT FIX — set the correct payer
+    tx.feePayer = creator.publicKey;
+
+    await getProvider().sendAndConfirm(tx, [creator, gumballAdmin]);
 }
+
 
 export async function claimPrizeBack(
     gumballPdaAddr: PublicKey,
@@ -337,7 +341,7 @@ export async function claimPrizeBack(
             associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
         })
-        .signers([creator])
+        .signers([creator, gumballAdmin])
         .rpc();
 }
 

@@ -171,6 +171,7 @@ pub fn end_gumball(ctx: Context<EndGumball>, gumball_id: u32) -> Result<()> {
 #[instruction(gumball_id: u32)]
 pub struct EndGumball<'info> {
     #[account(
+        mut,
         seeds = [b"gumball"],
         bump = gumball_config.config_bump,
         constraint = gumball_config.gumball_admin == gumball_admin.key() @ConfigStateErrors::InvalidGumballAdmin

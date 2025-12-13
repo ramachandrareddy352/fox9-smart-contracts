@@ -18,6 +18,7 @@ import {
     cancelGumball,
     updateGumballTime,
     updateGumballData,
+    endGumball,
 } from "./helpers";
 import {
     setProgram,
@@ -155,17 +156,24 @@ describe("Create Gumball — Bankrun", () => {
         );
 
         // wrap some time to test cases
-        // await warpForward(1000);
-        // await activateGumball(gumballPdaAddr, gumballId, gumball_admin);
+        await warpForward(1000);
+        await activateGumball(gumballPdaAddr, gumballId, gumball_admin);
 
         await updateGumballData(gumballPdaAddr, gumballId, 200_000_000, 3, gumball_1_creator, gumball_admin);
 
-        await updateGumballTime(gumballPdaAddr, gumballId, now + 100000, end, true, gumball_1_creator, gumball_admin);
+        await warpForward(10000);
+
+        // await updateGumballTime(gumballPdaAddr, gumballId, now + 100000, end, true, gumball_1_creator, gumball_admin);
+
+        const fakeMint = await createSplMint();
+
+        // we are using sol, so fake mint and ata are accepted
+        await endGumball(gumballPdaAddr, gumballId, gumball_admin, gumball_1_creator, fakeMint, ticketEscrow, ticketEscrow, ticketEscrow);
 
         const solGumball = await program.account.gumballMachine.fetch(gumballPdaAddr);
         console.log(solGumball)
 
-        await cancelGumball(gumballPdaAddr, gumballId, gumball_1_creator, gumball_admin);
+        // await cancelGumball(gumballPdaAddr, gumballId, gumball_1_creator, gumball_admin);
 
     });
 
